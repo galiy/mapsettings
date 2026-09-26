@@ -14,10 +14,14 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -107,17 +111,111 @@ func main() {
 
 	mux := newMux(fc.User, fc.Pass)
 	srv := &http.Server{
-		Addr:              fc.Listen,
 		Handler:           mux,
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		IdleTimeout:       60 * time.Second,
 	}
-	log.Printf("map-settings %s: http://%s/ (чтение: %s; запись: %s; конфиг %s)",
-		version, fc.Listen, connSummary(fc.Read), connSummary(fc.Write), cfgPath)
-	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+	// Свободный порт: пробуем заданный, при занятости берём любой свободный.
+	ln, url, err := listenUI(fc.Listen)
+	if err != nil {
 		log.Fatalf("map-settings: %v", err)
 	}
+	log.Printf("map-settings %s: UI доступен по адресу %s (чтение: %s; запись: %s; конфиг %s)",
+		version, url, connSummary(fc.Read), connSummary(fc.Write), cfgPath)
+	// Сервер стартуем сразу; браузер открываем после готовности прослушивания.
+	go func() {
+		if err := srv.Serve(ln); err != nil && err != http.ErrServerClosed {
+			log.Fatalf("map-settings: %v", err)
+		}
+	}()
+	waitReady(ln.Addr())
+	// Открываем страницу только при наличии графического дисплея в сессии.
+	if displayAvailable() {
+		go openBrowser(url)
+	} else {
+		log.Printf("map-settings: графический дисплей не обнаружен — откройте %s вручную", url)
+	}
+	select {}
+}
+
+// waitReady ждёт, пока сервер начнёт принимать соединения (до ~3 с).
+func waitReady(addr net.Addr) {
+	for i := 0; i < 30; i++ {
+		c, err := net.DialTimeout("tcp", addr.String(), 200*time.Millisecond)
+		if err == nil {
+			c.Close()
+			return
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+}
+
+// listenUI пытается занять заданный адрес; если порт занят — берёт свободный.
+// Возвращает слушатель и URL для доступа (с фактическим портом).
+func listenUI(addr string) (net.Listener, string, error) {
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		host, port = "", "8099"
+	}
+	if ln, err := net.Listen("tcp", net.JoinHostPort(host, port)); err == nil {
+		return ln, urlFor(host, ln.Addr()), nil
+	}
+	// Запрошенный порт занят — берём любой свободный на том же хосте.
+	ln, err := net.Listen("tcp", net.JoinHostPort(host, "0"))
+	if err != nil {
+		return nil, "", err
+	}
+	return ln, urlFor(host, ln.Addr()), nil
+}
+
+// urlFor формирует URL по адресу прослушивания (0.0.0.0/:: → 127.0.0.1).
+func urlFor(host string, la net.Addr) string {
+	if ta, ok := la.(*net.TCPAddr); ok {
+		if host == "" || host == "0.0.0.0" || host == "::" {
+			host = "127.0.0.1"
+		}
+		return fmt.Sprintf("http://%s/", net.JoinHostPort(host, strconv.Itoa(ta.Port)))
+	}
+	return "http://" + la.String() + "/"
+}
+
+// displayAvailable — есть ли графический дисплей в окружении сессии.
+func displayAvailable() bool {
+	switch runtime.GOOS {
+	case "linux", "freebsd", "openbsd", "netbsd":
+		return os.Getenv("DISPLAY") != "" || os.Getenv("WAYLAND_DISPLAY") != ""
+	default:
+		return true
+	}
+}
+
+// openBrowser открывает URL в браузере по умолчанию, перебирая варианты.
+func openBrowser(url string) {
+	var candidates [][]string
+	switch runtime.GOOS {
+	case "darwin":
+		candidates = [][]string{{"open", url}}
+	case "windows":
+		candidates = [][]string{{"rundll32", "url.dll,FileProtocolHandler", url}}
+	default:
+		candidates = [][]string{
+			{"xdg-open", url}, {"gio", "open", url},
+			{"firefox", url}, {"google-chrome", url}, {"chromium", url},
+		}
+	}
+	for _, c := range candidates {
+		if _, err := exec.LookPath(c[0]); err != nil {
+			continue
+		}
+		out, err := exec.Command(c[0], c[1:]...).CombinedOutput()
+		if err == nil {
+			log.Printf("map-settings: UI открыт (%s)", c[0])
+			return
+		}
+		log.Printf("map-settings: %s не сработал: %v (%s)", c[0], err, strings.TrimSpace(string(out)))
+	}
+	log.Printf("map-settings: не удалось открыть браузер автоматически — откройте %s", url)
 }
 
 // writeJSON/writeJSONStatus — небольшие помощники ответов API.

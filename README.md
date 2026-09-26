@@ -85,19 +85,10 @@ go build -o mapsettings .        # или: make build
 Если файла нет, он создаётся при первом запуске. Файл и бинарник **не коммитятся**. Рядом ведётся лог **`mapsettings.log`**
 (время, чтения/записи/команды, результаты и ошибки); он тоже в `.gitignore`.
 
-Шаблон — `mapsettings.sample.json`:
-
-```json
-{
-  "listen": ":8099",
-  "read":  { "protocol": "modbus", "transport": "tcp", "ip": "192.168.13.60", "port": 502, "unit": 1 },
-  "write": { "protocol": "malina", "host": "192.168.13.60", "login": "admin", "password": "" },
-  "user": "",
-  "pass": ""
-}
-```
-Для COM: `"transport": "com", "serial": "/dev/ttyUSB0", "baud": 115200`.
-Для чтения по Малине: `"protocol": "malina", "host": "...", "login": "...", "password": "..."`.
+Все настройки задаются через веб-UI; `mapsettings.json` создаётся автоматически
+при первом запуске/сохранении. Отдельного файла-шаблона в проекте нет.
+Для COM в UI выбираются порт и скорость; для чтения/записи по Малине — host,
+логин и пароль.
 
 ## API
 
