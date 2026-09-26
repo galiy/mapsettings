@@ -17,15 +17,16 @@ import (
 // configFileName — файл локальных настроек рядом с бинарником (в .gitignore).
 const configFileName = "mapsettings.json"
 
-// fileConfig — сохраняемые настройки: адрес/режим по умолчанию и параметры
-// запуска. Значения из файла применяются, если не переопределены флагами.
+// fileConfig — сохраняемые настройки: адрес подключения и параметры запуска.
+// Значения из файла применяются, если не переопределены флагами.
+// Тип МАП (Титанатор/Доминатор) в конфиге не хранится: он определяется
+// автоматически по ячейке _DevOpt при первом чтении.
 type fileConfig struct {
 	Listen string `json:"listen,omitempty"`
 	Map    string `json:"map,omitempty"`
 	Unit   int    `json:"unit,omitempty"`
 	User   string `json:"user,omitempty"`
 	Pass   string `json:"pass,omitempty"`
-	Mode   string `json:"mode,omitempty"`
 	IP     string `json:"ip,omitempty"`
 	Port   int    `json:"port,omitempty"`
 }
@@ -45,6 +46,23 @@ func configPath() string {
 		return filepath.Join(wd, configFileName)
 	}
 	return filepath.Join(dir, configFileName)
+}
+
+// loadLegacyMode читает устаревшее поле "mode" из конфига. Оно больше не
+// сохраняется (тип МАП определяется автоматически), но используется как
+// резервный режим, если определение по _DevOpt невозможно (нет связи).
+func loadLegacyMode(path string) string {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	var m struct {
+		Mode string `json:"mode"`
+	}
+	if err := json.Unmarshal(b, &m); err != nil {
+		return ""
+	}
+	return m.Mode
 }
 
 // loadFileConfig читает конфиг; отсутствие файла — не ошибка (nil).

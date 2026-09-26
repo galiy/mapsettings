@@ -23,6 +23,14 @@ import (
 // version подставляется через -ldflags "-X main.version=..." (по умолчанию dev).
 var version = "dev"
 
+// debug включает отладочную нумерацию элементов интерфейса (#N). Подставляется
+// через -ldflags "-X main.debug=true" (цель make build-debug); по умолчанию
+// пусто (выключено), и наведение номеров не показывает.
+var debug = ""
+
+// debugEnabled сообщает, собиралась ли программа с отладочной нумерацией.
+func debugEnabled() bool { return debug != "" }
+
 // cfgPath — путь к локальному конфигу (mapsettings.json), сохраняется сервером
 // при изменении режима/IP/порта. Файл в .gitignore.
 var cfgPath string
@@ -35,11 +43,34 @@ func main() {
 		user    = flag.String("user", "", "HTTP Basic: логин (пусто — без авторизации)")
 		pass    = flag.String("pass", "", "HTTP Basic: пароль")
 		showVer = flag.Bool("version", false, "показать версию и выйти")
+		dbgIdx  = flag.Bool("dbgindex", false, "вывести индекс отладочных номеров (№ → элемент) и выйти")
+		genDbg  = flag.Bool("gen-dbgorder", false, "дополнить фиксированный порядок отладочных номеров (dbgindex_order.go)")
 	)
 	flag.Parse()
 
 	if *showVer {
 		fmt.Printf("map-settings %s\n", version)
+		return
+	}
+	if *genDbg {
+		added, err := writeDbgOrder()
+		if err != nil {
+			log.Fatalf("map-settings: порядок номеров: %v", err)
+		}
+		fmt.Printf("dbgindex_order.go: добавлено %d id\n", added)
+		return
+	}
+	if *dbgIdx {
+		for _, m := range []string{mapModeTitanator, mapModeDominator} {
+			entries, err := canonicalDbgEntries(m)
+			if err != nil {
+				log.Fatalf("map-settings: индекс: %v", err)
+			}
+			fmt.Printf("=== %s (%d элементов) ===\n", m, len(entries))
+			for _, e := range entries {
+				fmt.Printf("№%-4d %s\n", e.N, e.Label)
+			}
+		}
 		return
 	}
 
@@ -77,11 +108,11 @@ func main() {
 	if effUnit <= 0 || effUnit > 255 {
 		log.Fatalf("map-settings: некорректный unit %d", effUnit)
 	}
-	// Режим/IP/порт по умолчанию для UI: из конфига, если сохранены.
-	mode := mapModeDominator
-	if fc != nil && fc.Mode != "" {
-		mode = normalizeMapMode(fc.Mode)
-	}
+	// IP/порт по умолчанию для UI: из конфига, если сохранены. Тип МАП не
+	// хранится — определяется автоматически (_DevOpt) при первом чтении;
+	// устаревшее поле "mode" используется только как резерв при отсутствии
+	// связи с МАП.
+	mode := normalizeMapMode(loadLegacyMode(cfgPath))
 	if fc != nil && fc.IP != "" {
 		ip = fc.IP
 	}
@@ -95,7 +126,7 @@ func main() {
 		fc = &fileConfig{
 			Listen: effListen, Map: effMap, Unit: effUnit,
 			User: effUser, Pass: effPass,
-			Mode: defaults.mode, IP: defaults.ip, Port: defaults.port,
+			IP: defaults.ip, Port: defaults.port,
 		}
 		if err := saveFileConfig(cfgPath, fc); err != nil {
 			log.Printf("map-settings: не удалось создать конфиг %s: %v", cfgPath, err)

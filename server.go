@@ -15,16 +15,38 @@ import (
 	"encoding/json"
 	"io/fs"
 	"log"
+	"net"
 	"net/http"
+	"strconv"
+	"strings"
+	"sync"
 	"time"
 )
 
 //go:embed web
 var webFS embed.FS
 
-// defaults — адрес/режим по умолчанию из флагов; клиент может переопределить
-// IP/порт/режим (сохраняются в localStorage браузера).
-var defaults mapSettingsTarget
+// defaults — адрес/тип по умолчанию из флагов и IP/порт из конфига; клиент
+// может переопределить IP/порт. Читается/пишется из параллельных HTTP-запросов,
+// поэтому доступ — через mutex (или snapshot в начале обработки).
+var (
+	defaults   mapSettingsTarget
+	defaultsMu sync.RWMutex
+)
+
+// defaultsSnapshot возвращает копию текущих значений по умолчанию.
+func defaultsSnapshot() mapSettingsTarget {
+	defaultsMu.RLock()
+	defer defaultsMu.RUnlock()
+	return defaults
+}
+
+// setDefaultsAddr сохраняет IP/порт подключения (потокобезопасно).
+func setDefaultsAddr(ip string, port int) {
+	defaultsMu.Lock()
+	defaults.ip, defaults.port = ip, port
+	defaultsMu.Unlock()
+}
 
 // readTimeout — верхняя граница на медленные Modbus-операции с МАП.
 const readTimeout = 90 * time.Second
@@ -39,6 +61,8 @@ func newMux(user, pass string) http.Handler {
 	auth := basicAuth(user, pass)
 	mux.Handle("/api/config", auth(http.HandlerFunc(apiConfig)))
 	mux.Handle("/api/settings", auth(http.HandlerFunc(apiSettings)))
+	mux.Handle("/api/param", auth(http.HandlerFunc(apiParam)))
+	mux.Handle("/api/dbgindex", auth(http.HandlerFunc(apiDbgIndex)))
 	mux.Handle("/api/apply", auth(http.HandlerFunc(apiApply)))
 	mux.Handle("/api/action", auth(http.HandlerFunc(apiAction)))
 	mux.Handle("/api/time", auth(http.HandlerFunc(apiTime)))
@@ -88,32 +112,47 @@ type targetReq struct {
 	Port int    `json:"port"`
 }
 
-func resolveTarget(req targetReq) (mapSettingsTarget, error) {
-	mode := req.Mode
-	if mode == "" {
-		mode = defaults.mode
-	}
+func resolveTarget(ctx context.Context, req targetReq) (mapSettingsTarget, error) {
+	d := defaultsSnapshot()
 	ip := req.IP
 	if ip == "" {
-		ip = defaults.ip
+		ip = d.ip
 	}
 	port := req.Port
 	if port == 0 {
-		port = defaults.port
+		port = d.port
+	}
+	// Проверяем адрес ДО любого сетевого обращения (в т.ч. до определения типа).
+	if _, err := validateMapTarget(d.mode, ip, port); err != nil {
+		return mapSettingsTarget{}, err
+	}
+	unit := byte(1)
+	if d.unit != 0 {
+		unit = d.unit
+	}
+	mode := req.Mode
+	if strings.TrimSpace(mode) == "" {
+		// Тип не задан — определяем по _DevOpt; при недоступности МАП
+		// используем резервный тип (legacy "mode" из конфига или dominator).
+		detected, err := detectMapMode(ctx, net.JoinHostPort(ip, strconv.Itoa(port)), unit)
+		if err != nil {
+			log.Printf("map-settings: %v; используем резервный режим %q", err, d.mode)
+			mode = d.mode
+		} else {
+			mode = detected
+		}
 	}
 	t, err := validateMapTarget(mode, ip, port)
 	if err != nil {
 		return t, err
 	}
-	if defaults.unit != 0 {
-		t.unit = defaults.unit
-	}
+	t.unit = unit
 	return t, nil
 }
 
-func targetFromQuery(r *http.Request) (mapSettingsTarget, error) {
+func targetFromQuery(ctx context.Context, r *http.Request) (mapSettingsTarget, error) {
 	port := atoiDefault(r.URL.Query().Get("port"), 0)
-	return resolveTarget(targetReq{Mode: r.URL.Query().Get("mode"), IP: r.URL.Query().Get("ip"), Port: port})
+	return resolveTarget(ctx, targetReq{Mode: r.URL.Query().Get("mode"), IP: r.URL.Query().Get("ip"), Port: port})
 }
 
 func apiConfig(w http.ResponseWriter, r *http.Request) {
@@ -123,46 +162,44 @@ func apiConfig(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "bad json: "+err.Error(), http.StatusBadRequest)
 			return
 		}
-		mode := req.Mode
-		if mode == "" {
-			mode = defaults.mode
-		}
+		d := defaultsSnapshot()
 		ip := req.IP
 		if ip == "" {
-			ip = defaults.ip
+			ip = d.ip
 		}
 		port := req.Port
 		if port == 0 {
-			port = defaults.port
+			port = d.port
 		}
-		if _, err := validateMapTarget(mode, ip, port); err != nil {
+		// Тип МАП в настройках не хранится (определяется автоматически),
+		// сохраняем только IP/порт подключения.
+		if _, err := validateMapTarget(d.mode, ip, port); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		defaults.mode = normalizeMapMode(mode)
-		defaults.ip = ip
-		defaults.port = port
+		setDefaultsAddr(ip, port)
 		fc := loadFileConfig(cfgPath)
 		if fc == nil {
 			fc = &fileConfig{}
 		}
-		fc.Mode, fc.IP, fc.Port = defaults.mode, ip, port
+		fc.IP, fc.Port = ip, port
 		if err := saveFileConfig(cfgPath, fc); err != nil {
 			log.Printf("map-settings: сохранение конфига %s: %v", cfgPath, err)
 		}
 		writeJSON(w, map[string]any{"ok": true})
 		return
 	}
+	d := defaultsSnapshot()
 	writeJSON(w, map[string]any{
-		"mode": defaults.mode,
-		"ip":   defaults.ip,
-		"port": defaults.port,
-		"unit": int(defaults.unit),
+		"ip":    d.ip,
+		"port":  d.port,
+		"unit":  int(d.unit),
+		"debug": debugEnabled(),
 	})
 }
 
 func apiSettings(w http.ResponseWriter, r *http.Request) {
-	target, err := targetFromQuery(r)
+	target, err := targetFromQuery(r.Context(), r)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -177,16 +214,58 @@ func apiSettings(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, snap)
 }
 
+// apiDbgIndex — детерминированный индекс отладочных номеров (только debug).
+func apiDbgIndex(w http.ResponseWriter, r *http.Request) {
+	if !debugEnabled() {
+		http.NotFound(w, r)
+		return
+	}
+	mode := normalizeMapMode(r.URL.Query().Get("mode"))
+	entries, err := canonicalDbgEntries(mode)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, entries)
+}
+
+// apiParam — чтение одного параметра: GET /api/param?mode=&ip=&port=&key=
+func apiParam(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	target, err := targetFromQuery(r.Context(), r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	key := r.URL.Query().Get("key")
+	if key == "" {
+		http.Error(w, "не задан key", http.StatusBadRequest)
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), readTimeout)
+	defer cancel()
+	v, err := readMapSettingView(ctx, target, key)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	writeJSON(w, v)
+}
+
 func apiApply(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		targetReq
-		Changes map[string]float64 `json:"changes"`
+		Changes     map[string]float64 `json:"changes"`
+		AllowDanger bool               `json:"allowDanger"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "bad json: "+err.Error(), http.StatusBadRequest)
 		return
 	}
-	target, err := resolveTarget(req.targetReq)
+	target, err := resolveTarget(r.Context(), req.targetReq)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -197,7 +276,7 @@ func apiApply(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), readTimeout)
 	defer cancel()
-	results, err := applyMapSettings(ctx, target, req.Changes)
+	results, err := applyMapSettings(ctx, target, req.Changes, req.AllowDanger)
 	resp := map[string]any{"results": results}
 	if err != nil {
 		resp["error"] = err.Error()
@@ -218,7 +297,7 @@ func apiAction(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad json: "+err.Error(), http.StatusBadRequest)
 		return
 	}
-	target, err := resolveTarget(req.targetReq)
+	target, err := resolveTarget(r.Context(), req.targetReq)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -236,7 +315,7 @@ func apiAction(w http.ResponseWriter, r *http.Request) {
 
 func apiTime(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodGet {
-		target, err := targetFromQuery(r)
+		target, err := targetFromQuery(r.Context(), r)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
@@ -260,7 +339,7 @@ func apiTime(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad json: "+err.Error(), http.StatusBadRequest)
 		return
 	}
-	target, err := resolveTarget(req.targetReq)
+	target, err := resolveTarget(r.Context(), req.targetReq)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -275,5 +354,3 @@ func apiTime(w http.ResponseWriter, r *http.Request) {
 	log.Printf("map-settings: time %s: %02d:%02d записано", target.address(), req.Hour, req.Minute)
 	writeJSON(w, map[string]any{"ok": true})
 }
-
-// strconv используется в helpers main.go; оставлено для единообразия импорта.

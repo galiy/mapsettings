@@ -156,6 +156,161 @@ NAME_OVERRIDE = {
     "_T_AccDisch": "Обратный отсчёт работы на низком напряжении АКБ",
 }
 
+# Ручные уточнения для отдельных ячеек. Нужны там, где перечисление значений в
+# документе идёт на СЛЕДУЮЩЕЙ строке (генератор берёт описание только из строки
+# определения), либо где перечисление разобрано ошибочно. Ключ — имя ячейки:
+#   "enum"       — варианты (код → подпись), заменяет выведенный enum;
+#   "bits"       — битовые поля, заменяет выведенные;
+#   "name"       — русское имя;
+#   "desc_extra" — текст, дописываемый к описанию.
+CELL_OVERRIDES = {
+    "_POW": {
+        "enum": {
+            "0": "1,3 кВт", "1": "1,5 кВт", "2": "2 кВт", "3": "3 кВт",
+            "4": "4,5 кВт", "5": "6 кВт", "6": "9 кВт", "7": "12 кВт",
+            "8": "15 кВт", "9": "20 кВт", "10": "24 кВт", "11": "36 кВт",
+        },
+        "desc_extra": "Код 0…11 задаёт номинальную мощность: "
+                      "1,3; 1,5; 2; 3; 4,5; 6; 9; 12; 15; 20; 24; 36 кВт.",
+    },
+    "_UACC": {
+        "enum": {"0": "12 В", "1": "24 В", "2": "48 В", "3": "96 В"},
+        "desc_extra": "Значения: 0 — 12 В, 1 — 24 В, 2 — 48 В, 3 — 96 В "
+                      "(число последовательных блоков АКБ).",
+    },
+    "_VerPO": {
+        "desc_extra": "Младшие 5 бит — целая часть, старшие 3 бита — дробная "
+                      "(после точки): Ver = (значение & 0x1F).(значение >> 5).",
+    },
+    # Только для чтения (раздел «Только на Чтение», адреса 0x00–0x02):
+    # делаем значения человеко-читаемыми.
+    "_Device": {
+        "name": "Код устройства",
+        "enum": {"3": "МАП"},
+        "min": 0, "max": 255,
+        "desc_extra": "Код устройства: 3 — МАП; другие коды — прочие изделия "
+                      "фирмы Микроарт.",
+    },
+    "_VerPow": {
+        "fields": [
+            {"label": "Версия платы", "lsb": 0, "bits": 5},
+            {"label": "Гибрид", "lsb": 7, "bits": 1,
+             "enum": {"0": "нет", "1": "гибрид"}},
+        ],
+        "desc_extra": "Старший бит =1 — гибрид; биты 6 и 5 зарезервированы; "
+                      "младшие 5 бит — версия силовой платы.",
+        "min": 0, "max": 255,
+    },
+    "_VerPO": {
+        "name": "Версия ПО",
+        "format": "ver",
+        "desc_extra": "Отображается как «целая.дробная», например 4.3",
+    },
+
+    # Серийный номер МАП: общее описание относится к четырём ячейкам
+    # (0x18/0x19 — младший/старший байт, 0x22/0x23 — резерв/индекс).
+    # _SerialNum0/1 — младший/старший байты одного 16-битного номера:
+    # объединяются в один параметр (см. pair_base), имя — от младшей ячейки.
+    "_SerialNum0": {
+        "name": "Серийный номер МАП",
+        "desc_extra": "Серийный номер МАП (16 бит: 0x18 — младший байт, "
+                      "0x19 — старший). Может использоваться как уникальный ID.",
+    },
+    "_SerialNum2": {
+        "name": "Серийный номер: резервный байт",
+        "desc_extra": "Зарезервирован (0). Относится к серийному номеру МАП, "
+                      "который может использоваться как уникальный ID.",
+    },
+    "_SerialNum3": {
+        "name": "Серийный номер: индекс (буква ASCII)",
+        "desc_extra": "Индекс серийного номера — буква ASCII. Серийный номер "
+                      "МАП может использоваться как уникальный ID.",
+    },
+    "_Language": {
+        "name": "Язык меню",
+        "enum": {"0": "Русский", "1": "Английский"},
+        "desc_extra": "0 — Русский, 1 — Английский. В Титанаторе язык можно "
+                      "изменить; в остальных моделях ячейка доступна только на "
+                      "чтение.",
+    },
+    "_DevOpt": {
+        "name": "Тип процессора (модель)",
+        "enum": {"1": "МАП Sin / Доминатор", "2": "снята с производства",
+                 "3": "Титанатор"},
+        "desc_extra": "1 — МАП Sin/Доминатор; 2 — снята с производства; "
+                      "3 — Титанатор.",
+    },
+    "_Grid_52Hz": {
+        "enum": {"0": "нет управления", "1": "управление включено",
+                 "2": "управление с частотой до 52 Гц"},
+        "desc_extra": "0 — нет управления сетевым солнечным инвертором; "
+                      "1 — управление включено; 2 — управление с ограничением "
+                      "частоты до 52 Гц.",
+    },
+    "_VerPlatNet": {
+        "name": "Версия сетевой платы",
+        "fields": [
+            {"label": "Версия", "lsb": 0, "bits": 3, "offset": 6},
+            {"label": "Тип", "lsb": 4, "bits": 1,
+             "enum": {"0": "low", "1": "Hi"}},
+        ],
+        "desc_extra": "Версия = (значение & 7) + 6; бит 4 — тип сетевой "
+                      "платы: 0 — low, 1 — Hi.",
+        "min": 0, "max": 255,
+    },
+    "_SyncDiz_Plat": {
+        "name": "Плата синхронизации 3-фаз/паралл. и доп. реле",
+        "bits": [
+            {"bit": 0, "name": "подключена плата синхронизации 3-фаз и паралл. "
+                               "(для Титанатора: =1 всегда)"},
+            {"bit": 1, "name": "подключены внешние доп. реле управления "
+                               "(для Титанатора: подключён II вход сети)"},
+            {"bit": 3, "name": "подключено управление мощным реле переключения "
+                               "сети на дизель (есть II вход сети)"},
+        ],
+        "desc_extra": "Биты: 0 — плата синхронизации 3-фаз/паралл.; "
+                      "1 — внешние доп. реле; 3 — управление реле переключения "
+                      "сети на дизель (II вход). Для Титанатора: бит0 = 1 всегда, "
+                      "бит1 — подключён II вход сети.",
+    },
+    "_CulerSpead": {
+        "enum": {"0": "не вращается", "1": "половинная скорость",
+                 "2": "полная скорость"},
+        "desc_extra": "0 — не вращается, 1 — половинная скорость, "
+                      "2 — полная скорость.",
+    },
+    "_MPPT_toCh": {
+        "desc_extra": "0 — циклический заряд; 1 — дозаряд; 2 — буферный заряд 1; "
+                      "3 — буферный заряд 2. Все управляемые МАП MPPT находятся "
+                      "в одинаковом режиме.",
+    },
+    "_flagUnet2": {
+        "desc_extra": "Бит0 — активный второй вход; бит1 — есть сеть на первом "
+                      "входе; бит2 — есть сеть на втором входе. Первый вход "
+                      "всегда в приоритете.",
+    },
+    "_LCD_TypeSin": {
+        "desc_extra": "Алгоритмы: 0 — Чистый Sin; 1 — Оптимальный Sin; "
+                      "2 — Pmax; 3 — Прецизионный Sin. По умолчанию 1.",
+    },
+    # Старший байт RCON в документе пронумерован как биты 8…15, но это
+    # однобайтовая ячейка: перенумеровываем в 0…7, иначе биты ≥8 недостижимы.
+    "_RCON_img_H": {
+        "bits": [
+            {"bit": 7, "name": "TRAPR: произошёл сброс конфликта ловушек"},
+            {"bit": 6, "name": "IOPUWR: недопустимый код операции/режим "
+                               "адресации вызвал сброс"},
+            {"bit": 3, "name": "VREGSF: Flash-регулятор напряжения активен "
+                               "во время сна"},
+            {"bit": 1, "name": "CM: несоответствие конфигурации"},
+            {"bit": 0, "name": "VREGS: регулятор напряжения активен во время сна"},
+        ],
+        "desc_extra": "Биты в документе пронумерованы как 8…15 (старший байт "
+                      "RCON); в этой однобайтовой ячейке им соответствуют "
+                      "биты 0…7.",
+    },
+}
+
 # Регулярное выражение заведомо «пустого» описания.
 PLACEHOLDER_DESC_RE = re.compile(r"^[\s.,…·\-–—]*$")
 
@@ -816,6 +971,29 @@ def build_record(raw, addr, tail, block_text, line_no, menu_group, green_names):
         unit = "%"
     enum, bits = derive_enum_bits(raw, block_text)
 
+    # Ручные уточнения (перечисления на следующей строке документа и т.п.).
+    fmtv = None
+    fields = None
+    ov = CELL_OVERRIDES.get(raw)
+    if ov:
+        if "enum" in ov:
+            enum = dict(ov["enum"])
+            bits = []
+        if "bits" in ov:
+            bits = [dict(b) for b in ov["bits"]]
+            enum = {}
+        if "fields" in ov:
+            fields = [dict(f) for f in ov["fields"]]
+            enum = {}
+            bits = []
+        if "access" in ov:
+            access = ov["access"]
+        fmtv = ov.get("format")
+        if "desc_extra" in ov:
+            extra = ov["desc_extra"].strip()
+            if extra:
+                desc = (desc + " " + extra).strip() if desc else extra
+
     modes = derive_modes(raw, tail, block_text, green_names)
 
     group = EXPLICIT_GROUP.get(raw)
@@ -830,6 +1008,8 @@ def build_record(raw, addr, tail, block_text, line_no, menu_group, green_names):
     name_ru = clean_name(name_ru_raw, name_fallback)
     if raw in NAME_OVERRIDE:
         name_ru = NAME_OVERRIDE[raw]
+    if ov and ov.get("name"):
+        name_ru = ov["name"]
 
     # «нет пригодного описания» — для отчёта и для производных имён
     usable_desc = bool(desc) and bool(CYR_RE.search(desc)) and not PLACEHOLDER_DESC_RE.match(desc)
@@ -840,6 +1020,11 @@ def build_record(raw, addr, tail, block_text, line_no, menu_group, green_names):
         nums = sorted(int(k) for k in enum.keys() if re.fullmatch(r"-?\d+", k))
         if nums:
             mn, mx = nums[0], nums[-1]
+    if ov:
+        if "min" in ov:
+            mn = ov["min"]
+        if "max" in ov:
+            mx = ov["max"]
 
     rec = {
         "key": None,
@@ -859,6 +1044,10 @@ def build_record(raw, addr, tail, block_text, line_no, menu_group, green_names):
         "desc": desc,
         "order": order,
     }
+    if fmtv:
+        rec["format"] = fmtv
+    if fields:
+        rec["fields"] = fields
     if enum:
         rec["enum"] = enum
     if bits:
@@ -866,6 +1055,7 @@ def build_record(raw, addr, tail, block_text, line_no, menu_group, green_names):
     rec["_line"] = line_no
     rec["_nodesc"] = nodesc
     rec["_derived"] = (raw in NAME_OVERRIDE) or nodesc
+    rec["_fixed_range"] = bool(ov and ("min" in ov or "max" in ov))
     return rec
 
 
@@ -878,6 +1068,12 @@ def pair_base(cell):
 
     base сохраняет индекс массива: ``_I_Akb_MPPT_L[0]`` -> ``_I_Akb_MPPT[0]``.
     """
+    # Особый случай: серийный номер — байты 0 (младший) и 1 (старший) одной
+    # 16-битной величины.
+    if cell == "_SerialNum0":
+        return "low", "_SerialNum"
+    if cell == "_SerialNum1":
+        return "high", "_SerialNum"
     m = LOW_SUF_RE.search(cell)
     if m:
         return "low", cell[: m.start()] + (m.group(2) or "")
@@ -1187,6 +1383,8 @@ def fill_units_ranges(params):
       учётом scale/offset), либо явный «от A до B» из описания.
     """
     for p in params:
+        if p.get("_fixed_range"):
+            continue
         scale = p.get("scale") or 1.0
         offset = p.get("offset") or 0.0
         enum = p.get("enum") or {}
@@ -1287,6 +1485,12 @@ def main(argv=None):
         }
         if rec["width"] == 2:
             out["order"] = rec["order"]
+        if rec.get("format"):
+            out["format"] = rec["format"]
+        if rec.get("_fixed_range"):
+            out["_fixed_range"] = True
+        if "fields" in rec:
+            out["fields"] = rec["fields"]
         if "enum" in rec:
             out["enum"] = rec["enum"]
         if "bits" in rec:
@@ -1294,7 +1498,10 @@ def main(argv=None):
         params.append(out)
 
     params.sort(key=lambda p: (p["addr"], p["cell"]))
+    reorder_serial(params)
     fill_units_ranges(params)
+    for p in params:
+        p.pop("_fixed_range", None)
     self_check(params)
     catalog = {"source": SOURCE_NAME, "title": TITLE, "params": params}
 
@@ -1304,6 +1511,21 @@ def main(argv=None):
 
     print_summary(catalog, args.out, green_names, merged_pairs, derived)
     return 0
+
+
+def reorder_serial(params):
+    """Ставит ячейки серийного номера (0x22, 0x23) сразу после 0x18."""
+    moved = [p for p in params if p["cell"] in ("_SerialNum2", "_SerialNum3")]
+    if not moved:
+        return
+    for p in moved:
+        params.remove(p)
+    idx = next((i for i, p in enumerate(params) if p["cell"] == "_SerialNum0"), None)
+    if idx is None:
+        params.extend(moved)
+        return
+    for offset, p in enumerate(moved):
+        params.insert(idx + 1 + offset, p)
 
 
 def print_summary(catalog, out_path, green_names, merged_pairs, derived):

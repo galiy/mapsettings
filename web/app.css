@@ -32,11 +32,12 @@ h1 { font-size:22px; margin:0 0 4px; }
 .ms-group-title { margin:0 0 8px; font-size:14px; color:#fff; background:linear-gradient(135deg,#428bca,#346fa1); padding:7px 12px; border-radius:8px; display:inline-block; }
 .ms-table-wrap { overflow-x:auto; }
 .ms-table { border-collapse:collapse; width:100%; table-layout:fixed; font-size:13px; color:#2b3238; }
-.ms-table col.c-name { width:28%; }
-.ms-table col.c-addr { width:16%; }
-.ms-table col.c-val { width:34%; }
-.ms-table col.c-unit { width:8%; }
-.ms-table col.c-range { width:14%; }
+.ms-table col.c-name { width:24%; }
+.ms-table col.c-addr { width:13%; }
+.ms-table col.c-val { width:29%; }
+.ms-table col.c-unit { width:6%; }
+.ms-table col.c-range { width:11%; }
+.ms-table col.c-act { width:17%; }
 .ms-table th, .ms-table td { border:1px solid #e2e7ec; padding:6px 9px; text-align:left; vertical-align:middle; overflow-wrap:anywhere; word-break:break-word; }
 .ms-table thead th { font-size:12px; font-weight:600; color:#6b7785; background:#f4f7fa; }
 .ms-table td.ms-addr { font-family:"SF Mono",Menlo,Consolas,monospace; font-size:12px; color:#6b7785; }
@@ -50,14 +51,43 @@ h1 { font-size:22px; margin:0 0 4px; }
 .ms-radio { display:flex; align-items:flex-start; gap:6px; font-size:12px; font-weight:400; color:#2b3238; cursor:pointer; }
 .ms-radio input { width:auto; margin:2px 0 0; flex:0 0 auto; }
 .ms-input:focus { outline:none; border-color:#428bca; }
+.ms-input:disabled { background:#f4f7fa; color:#8a94a0; }
+.ms-radios input:disabled, .ms-checks input:disabled { cursor:default; }
+.ms-radio:has(input:disabled) { cursor:default; color:#8a94a0; }
 .ms-ro { font-weight:600; font-variant-numeric:tabular-nums; }
 .ms-text { color:#6b7785; margin-left:6px; font-size:12px; }
 .ms-err { color:#f03e3e; }
+
+/* Метка опасного параметра слева от имени. */
+.ms-danger { color:#c92a2a; font-weight:700; font-size:11px; margin-right:6px; white-space:nowrap; }
+
+/* Колонка «Действия»: Читать / Сохр. / разблокировка. */
+.ms-act { white-space:nowrap; }
+.ms-mini { padding:3px 7px; margin:1px; font-size:11px; border:1px solid #c9d6e3; border-radius:5px; background:#fff; color:#346fa1; cursor:pointer; }
+.ms-mini:hover:not(:disabled) { background:#eef4fb; border-color:#428bca; }
+.ms-mini:disabled { opacity:.45; cursor:default; }
+.ms-lock { color:#c92a2a; border-color:#f1aeb5; }
 
 /* Кнопка-подсказка «?» у параметров и элементов управления. */
 .ms-help { width:18px; height:18px; line-height:16px; margin-left:6px; padding:0; border:1px solid #c9d6e3; border-radius:50%; background:#fff; color:#346fa1; font-size:12px; font-weight:700; cursor:pointer; vertical-align:middle; }
 .ms-help:hover { background:#eef4fb; border-color:#428bca; }
 .ms-popover { position:absolute; z-index:200; max-width:380px; background:#fff; color:#2b3238; border:1px solid #c9d6e3; border-radius:8px; box-shadow:0 6px 24px rgba(0,0,0,.18); padding:10px 12px; font-size:13px; line-height:1.45; white-space:normal; }
+
+/* Отладочная нумерация (#N): номер всплывает сразу при наведении. */
+.ms-dbg-tip { position:absolute; z-index:300; background:#1a1d21; color:#fff; border-radius:5px; padding:2px 7px; font-size:12px; font-weight:700; font-family:"SF Mono",Menlo,Consolas,monospace; pointer-events:none; box-shadow:0 2px 8px rgba(0,0,0,.25); }
+
+/* Внутренняя навигация: кнопки разделов на главной и шапка раздела. */
+.ms-nav-list { display:flex; flex-wrap:wrap; gap:10px; }
+.ms-nav-btn { background:#fff; border:1px solid #c9d6e3; border-radius:8px; padding:10px 14px; font-size:13px; font-weight:600; color:#346fa1; cursor:pointer; }
+.ms-nav-btn:hover { background:#eef4fb; border-color:#428bca; }
+.ms-nav-accent { background:#428bca; border-color:#428bca; color:#fff; }
+.ms-nav-accent:hover { background:#346fa1; }
+.ms-nav-current { outline:2px solid #428bca; outline-offset:-2px; }
+.ms-sec-nav { margin-bottom:12px; }
+.ms-sec-bar { display:flex; flex-wrap:wrap; align-items:center; gap:10px; }
+.ms-sec-bar .ms-sec-title { font-size:15px; font-weight:700; margin-left:auto; }
+.ms-sec-bar .ms-status { flex-basis:100%; margin-top:6px; }
+.ms-group-wrap { margin-bottom:12px; }
 
 /* Управляющие воздействия. */
 .ms-actions { display:flex; flex-wrap:wrap; gap:10px; margin-bottom:14px; }

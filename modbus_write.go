@@ -139,35 +139,3 @@ func (c *Client) WriteCell(ctx context.Context, addr uint16, value byte) error {
 func (c *Client) WriteCommand(ctx context.Context, cmd byte) error {
 	return c.WriteCell(ctx, 0x0000, cmd)
 }
-
-// WritePage записывает страницу байтов (функция 0x10) начиная с побайтовой
-// ячейки start. len(data) должен быть чётным (страница кратна словам): нечётный
-// хвост дополняется нулём. Возвращает число записанных слов.
-func (c *Client) WritePage(ctx context.Context, start uint16, data []byte) (int, error) {
-	if len(data) == 0 {
-		return 0, fmt.Errorf("пустая страница")
-	}
-	if len(data)%2 != 0 {
-		data = append(append([]byte(nil), data...), 0x00)
-	}
-	qty := len(data) / 2
-	if qty > 120 {
-		return 0, fmt.Errorf("страница %d слов слишком велика для МАП (макс 120)", qty)
-	}
-	pdu := make([]byte, 0, 6+len(data))
-	pdu = append(pdu, 0x10, byte(start>>8), byte(start), byte(qty>>8), byte(qty), byte(len(data)))
-	pdu = append(pdu, data...)
-	rest, err := c.transact(ctx, pdu)
-	if err != nil {
-		return 0, err
-	}
-	if len(rest) != 5 || rest[0] != 0x10 {
-		return 0, fmt.Errorf("неожиданный ответ на 0x10: % x", rest)
-	}
-	gotAddr := binary.BigEndian.Uint16(rest[1:3])
-	gotQty := binary.BigEndian.Uint16(rest[3:5])
-	if gotAddr != start || int(gotQty) != qty {
-		return 0, fmt.Errorf("эхо 0x10 не совпало: addr=0x%04X qty=%d (ждали 0x%04X %d)", gotAddr, gotQty, start, qty)
-	}
-	return qty, nil
-}

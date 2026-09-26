@@ -38,7 +38,6 @@ import (
 )
 
 var (
-	DefaultPort    = "502"
 	ReadTimeout    = 3 * time.Second // таймаут чтения ответа гейта (по mapread.py работает при таймауте 3с)
 	ConnectTimeout = 3 * time.Second
 )

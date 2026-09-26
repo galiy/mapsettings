@@ -9,55 +9,61 @@
 <body>
 <div class="top-nav">
   <div>
-    <h1 class="ttl">Настройки МАП</h1>
-    <p class="sub">Чтение и запись ячеек МАП через mapgateway (Modbus TCP)</p>
+    <h1 class="ttl" data-dbgid="hdr:title">Настройки МАП</h1>
+    <p class="sub" data-dbgid="hdr:sub">Чтение и запись ячеек МАП через mapgateway (Modbus TCP)</p>
   </div>
 </div>
 
-<div class="group ms-panel">
-  <div class="ms-controls">
-    <label class="ms-field">Модель
-      <select id="msMode">
-        <option value="dominator">Доминатор</option>
-        <option value="titanator">Титанатор</option>
-      </select>
-    </label>
-    <label class="ms-field">IP
-      <input id="msIP" type="text" inputmode="decimal" autocomplete="off" spellcheck="false">
-    </label>
-    <label class="ms-field">Порт
-      <input id="msPort" type="number" min="1" max="65535" step="1" autocomplete="off">
-    </label>
-    <button id="msRead" class="nav-btn" type="button">Перечитать</button>
-    <button id="msWrite" class="nav-btn" type="button">Записать</button>
+<!-- Главная: настройки программы, время МАП и кнопки разделов. -->
+<div id="msHome">
+  <div class="group ms-panel">
+    <div class="ms-controls">
+      <label class="ms-field" data-dbgid="field:mode">Модель
+        <select id="msMode">
+          <option value="dominator">Доминатор</option>
+          <option value="titanator">Титанатор</option>
+        </select>
+      </label>
+      <label class="ms-field" data-dbgid="field:ip">IP
+        <input id="msIP" type="text" inputmode="decimal" autocomplete="off" spellcheck="false">
+      </label>
+      <label class="ms-field" data-dbgid="field:port">Порт
+        <input id="msPort" type="number" min="1" max="65535" step="1" autocomplete="off">
+      </label>
+      <button id="msRead" class="nav-btn" type="button" data-dbgid="btn:read">Перечитать</button>
+    </div>
+    <div id="msStatus" class="ms-status">Нажмите «Перечитать», чтобы загрузить параметры.</div>
   </div>
-  <div id="msStatus" class="ms-status">Нажмите «Перечитать», чтобы загрузить параметры.</div>
-</div>
 
-<div id="msSettings" class="ms-section" hidden>
-  <h2 class="ms-h2">Настройки</h2>
-  <div id="msSettingsBody"></div>
-</div>
-
-<div id="msMonitor" class="ms-section" hidden>
-  <h2 class="ms-h2">Управляющие воздействия и мониторинг</h2>
-  <div id="msActions" class="ms-actions"></div>
-  <div id="msMonitorBody"></div>
-</div>
-
-<div class="group ms-panel ms-time">
-  <h2 class="ms-h2">Текущее время МАП</h2>
-  <div class="ms-time-row">
-    <label class="ms-field">Часы
-      <input id="msTimeH" type="number" min="0" max="23" step="1">
-    </label>
-    <label class="ms-field">Минуты
-      <input id="msTimeM" type="number" min="0" max="59" step="1">
-    </label>
-    <button id="msTimeRead" class="nav-btn secondary" type="button">Прочитать время</button>
-    <button id="msTimeWrite" class="nav-btn" type="button">Записать время</button>
+  <div class="group ms-panel ms-time">
+    <h2 class="ms-h2" data-dbgid="sec:time:title">Текущее время МАП</h2>
+    <div class="ms-time-row">
+      <label class="ms-field" data-dbgid="field:timeH">Часы
+        <input id="msTimeH" type="number" min="0" max="23" step="1">
+      </label>
+      <label class="ms-field" data-dbgid="field:timeM">Минуты
+        <input id="msTimeM" type="number" min="0" max="59" step="1">
+      </label>
+      <button id="msTimeRead" class="nav-btn secondary" type="button" data-dbgid="btn:timeRead">Прочитать время</button>
+      <button id="msTimeWrite" class="nav-btn" type="button" data-dbgid="btn:timeWrite">Записать время</button>
+    </div>
+    <div id="msTimeStatus" class="ms-status"></div>
   </div>
-  <div id="msTimeStatus" class="ms-status"></div>
+
+  <div id="msHomeNav" class="ms-nav-list"></div>
+</div>
+
+<!-- Экран раздела: шапка с кнопками и содержимое. -->
+<div id="msSection" hidden>
+  <div class="group ms-panel ms-sec-bar">
+    <button id="msSecRead" class="nav-btn" type="button" data-dbgid="sec:read">Перечитать</button>
+    <button id="msSecWrite" class="nav-btn" type="button" data-dbgid="sec:write">Записать</button>
+    <button id="msSecHome" class="nav-btn secondary" type="button" data-dbgid="sec:home">На главную</button>
+    <span id="msSecTitle" class="ms-sec-title"></span>
+    <div id="msSecStatus" class="ms-status"></div>
+  </div>
+  <div id="msSecNav" class="ms-nav-list ms-sec-nav"></div>
+  <div id="msSecBody"></div>
 </div>
 
 <div class="foot" id="msFoot"></div>

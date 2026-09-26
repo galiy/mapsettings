@@ -55,7 +55,26 @@ const (
 	mapCellTimeCyr   = 0x1B6 // _LCD_TimeCyr = (hh<<3)|(mm/10) — EEPROM
 	mapCellTimeMin   = 0x44B // _TimeCyr_MINUT = mm%10 — RAM
 	mapCellPutEEPROM = 0x403 // _put_eeprom — флаг записи в EEPROM
+	mapCellDevOpt    = 0x007 // _DevOpt: 3 — Титанатор, иначе Доминатор
 )
+
+// detectMapMode читает _DevOpt=0x007 и определяет модель МАП.
+func detectMapMode(ctx context.Context, addr string, unit byte) (string, error) {
+	c := &Client{Address: addr, Unit: unit}
+	defer c.Close()
+	cells, errs := readCellRanges(ctx, c, []uint16{mapCellDevOpt})
+	if len(errs) > 0 {
+		return "", fmt.Errorf("определение модели: %s", strings.Join(errs, "; "))
+	}
+	v, ok := cells[mapCellDevOpt]
+	if !ok {
+		return "", fmt.Errorf("определение модели: ячейка 0x%03X недоступна", mapCellDevOpt)
+	}
+	if v == 3 {
+		return mapModeTitanator, nil
+	}
+	return mapModeDominator, nil
+}
 
 // mapBit — битовое поле ячейки.
 type mapBit struct {
@@ -85,6 +104,21 @@ type mapParamSpec struct {
 	// Order задаёт порядок байт для Width==2: "hl" (первая ячейка — старший
 	// байт, по умолчанию) или "lh" (первая ячейка — младший байт).
 	Order string `json:"order"`
+	// Format задаёт специальное представление значения: "" — обычное,
+	// "ver" — версия «целая.дробная» (младшие 5 бит — целая, старшие 3 — дробная).
+	Format string `json:"format"`
+	// Fields описывает разбиение байта на несколько именованных контролов
+	// (например, версия + флаг). Запись всё равно идёт одним числом.
+	Fields []mapField `json:"fields"`
+}
+
+// mapField — именованное битовое поле внутри байта.
+type mapField struct {
+	Label  string            `json:"label"`
+	Lsb    int               `json:"lsb"`
+	Bits   int               `json:"bits"`
+	Offset float64           `json:"offset,omitempty"`
+	Enum   map[string]string `json:"enum,omitempty"`
 }
 
 type mapSettingsCatalog struct {
@@ -128,6 +162,13 @@ func loadMapSettingsCatalog() (*mapSettingsCatalog, error) {
 // cellPairRole разбирает имя ячейки на базовое имя пары и роль байта:
 // 'L' — младший байт (_L/_VL/_L[n]), 'H' — старший (_H/_VH/_H[n]), 0 — не пара.
 func cellPairRole(cell string) (string, byte) {
+	// Серийный номер: 0 — младший байт, 1 — старший (один 16-битный номер).
+	if cell == "_SerialNum0" {
+		return "_SerialNum", 'L'
+	}
+	if cell == "_SerialNum1" {
+		return "_SerialNum", 'H'
+	}
 	head, indexed := cell, ""
 	if i := strings.LastIndexByte(cell, '['); i >= 0 {
 		head, indexed = cell[:i], cell[i:]
@@ -423,6 +464,9 @@ type mapSettingView struct {
 	Kind     string      `json:"kind"`
 	Access   string      `json:"access"`
 	Writable bool        `json:"writable"`
+	Danger   bool        `json:"danger,omitempty"`
+	Format   string      `json:"format,omitempty"`
+	Fields   []mapField  `json:"fields,omitempty"`
 	Value    *float64    `json:"value"`
 	Raw      *int        `json:"raw"`
 	Text     string      `json:"text,omitempty"`
@@ -435,6 +479,37 @@ type mapSettingView struct {
 	Error    string      `json:"error,omitempty"`
 	Options  []mapOption `json:"options,omitempty"`
 	Bits     []mapBit    `json:"bits,omitempty"`
+}
+
+// dangerKeys — ячейки (по ключу), изменение которых опасно для оборудования.
+// В UI такие параметры по умолчанию не редактируются; запись включается
+// отдельной кнопкой на время сессии страницы.
+var dangerKeys = map[string]bool{
+	"pow": true, "uacc": true, "devopt": true,
+	"fuacc_korr": true, "pow_korr": true, "i_chage_korr": true,
+	"lcd_acctype": true, "lcd_cacc": true,
+	"lcd_cichargestart": true, "lcd_cichargeend": true, "cichargeabsorb": true,
+	"tft_cichargesoc95": true,
+	"lcd_uaccchmax":     true, "lcd_uaccchbuf": true, "lcd_uaccchstart": true,
+	"lcd_uaccmin": true, "lcd_uaccminnetgen": true,
+	"del_uaccchbuf_24h": true, "deluchargeend": true,
+	"tft_soc_discharge": true, "tft_soc_startcharge": true, "tft_soc_dizstart": true,
+	"powaccnom": true, "lcd_netmaxpow": true, "lcd_dizelmaxpow": true,
+	"pnet_prodag_max":  true,
+	"lcd_umap220_need": true, "lcd_netalg": true,
+	"lcd_unetup": true, "lcd_unetdown": true, "lcd_unet2up": true, "lcd_unet2down": true,
+	"lcd_map_ifaze": true, "lcd_map_sync": true,
+	"lcd_slavemapnum": true, "lcd_mpptnum": true, "bms_num": true,
+	"no3fazemotor": true, "mask_dev_on": true, "avr_on": true,
+	"grid_52hz": true, "syncdiz_plat": true,
+	"lcd_netupload": true, "lcd_netupeco": true, "lcd_net2": true,
+	"lcd_netdizel": true, "netupeco_net2_off": true, "lcd_sensload": true,
+	"frozenuaccafterdischage": true,
+	// Версии/служебные ячейки: запись может нарушить работу.
+	"ram_end_l": true, "verplatpic": true, "verplatpowdop": true,
+	"vertest": true, "verpow": true, "device": true,
+	"serialnum0": true, "serialnum2": true, "serialnum3": true,
+	"verpo": true, "verplatnet": true,
 }
 
 // paramOptions строит список вариантов для перечислимого параметра: значение —
@@ -557,30 +632,8 @@ func buildSnapshot(mode, ip string, port int, unit byte, params []mapParamSpec, 
 		if !paramInMode(p, mode) {
 			continue
 		}
-		v := mapSettingView{
-			Key: p.Key, Cell: p.Cell, Addr: fmt.Sprintf("0x%03X", p.Addr),
-			Name: p.Name, Unit: p.Unit, Kind: p.Kind, Access: p.Access,
-			Writable: p.Access == "rw", Min: p.Min, Max: p.Max, Desc: p.Desc,
-			Scale: p.Scale, Offset: p.Offset,
-			Help: paramHelp(p),
-		}
-		raw, ok := rawValue(p, cells)
-		if !ok {
-			v.Error = "нет данных"
-		} else {
-			r := raw
-			val := displayValue(p, raw)
-			v.Raw = &r
-			v.Value = &val
-			v.Text = enumText(p, raw)
-		}
+		v := settingView(p, cells)
 		if p.Access == "rw" {
-			if opts := paramOptions(p); len(opts) > 0 {
-				v.Options = opts
-			}
-			if len(p.Bits) > 0 {
-				v.Bits = p.Bits
-			}
 			i := add(&snap.Settings, setIdx, p.Group)
 			snap.Settings[i].Params = append(snap.Settings[i].Params, v)
 		} else {
@@ -589,6 +642,65 @@ func buildSnapshot(mode, ip string, port int, unit byte, params []mapParamSpec, 
 		}
 	}
 	return snap
+}
+
+// settingView собирает представление одного параметра по прочитанным ячейкам.
+func settingView(p mapParamSpec, cells map[uint16]byte) mapSettingView {
+	v := mapSettingView{
+		Key: p.Key, Cell: p.Cell, Addr: fmt.Sprintf("0x%03X", p.Addr),
+		Name: p.Name, Unit: p.Unit, Kind: p.Kind, Access: p.Access,
+		Writable: p.Access == "rw", Danger: dangerKeys[p.Key],
+		Format: p.Format, Fields: p.Fields,
+		Min: p.Min, Max: p.Max, Desc: p.Desc,
+		Scale: p.Scale, Offset: p.Offset,
+		Help: paramHelp(p),
+	}
+	raw, ok := rawValue(p, cells)
+	if !ok {
+		v.Error = "нет данных"
+	} else {
+		r := raw
+		val := displayValue(p, raw)
+		v.Raw = &r
+		v.Value = &val
+		v.Text = enumText(p, raw)
+	}
+	if p.Access == "rw" {
+		if opts := paramOptions(p); len(opts) > 0 {
+			v.Options = opts
+		}
+		if len(p.Bits) > 0 {
+			v.Bits = p.Bits
+		}
+	}
+	return v
+}
+
+// readMapSettingView перечитывает один параметр по ключу.
+func readMapSettingView(ctx context.Context, target mapSettingsTarget, key string) (*mapSettingView, error) {
+	cat, err := loadMapSettingsCatalog()
+	if err != nil {
+		return nil, err
+	}
+	var spec mapParamSpec
+	found := false
+	for _, p := range cat.Params {
+		if p.Key == key && paramInMode(p, target.mode) {
+			spec, found = p, true
+			break
+		}
+	}
+	if !found {
+		return nil, fmt.Errorf("неизвестный параметр %q", key)
+	}
+	c := &Client{Address: target.address(), Unit: target.unit}
+	defer c.Close()
+	cells, errs := readCellRanges(ctx, c, neededAddrs([]mapParamSpec{spec}))
+	v := settingView(spec, cells)
+	if v.Error == "нет данных" && len(errs) > 0 {
+		v.Error = strings.Join(errs, "; ")
+	}
+	return &v, nil
 }
 
 // readMapSettingsSnapshot читает все параметры (для режима) с МАП.
@@ -644,7 +756,7 @@ func validateMapTarget(mode, ip string, port int) (mapSettingsTarget, error) {
 
 // applyMapSettings применяет изменения (только изменённые параметры) со служебным
 // обрамлением и верификацией. changes: key → новое отображаемое значение.
-func applyMapSettings(ctx context.Context, target mapSettingsTarget, changes map[string]float64) (map[string]string, error) {
+func applyMapSettings(ctx context.Context, target mapSettingsTarget, changes map[string]float64, allowDanger bool) (map[string]string, error) {
 	cat, err := loadMapSettingsCatalog()
 	if err != nil {
 		return nil, err
@@ -669,6 +781,12 @@ func applyMapSettings(ctx context.Context, target mapSettingsTarget, changes map
 		}
 		if p.Access != "rw" {
 			results[key] = "параметр только для чтения"
+			continue
+		}
+		// Опасные параметры записываются только при явном подтверждении
+		// (allowDanger), которое клиент ставит после разблокировки в UI.
+		if dangerKeys[key] && !allowDanger {
+			results[key] = "опасный параметр: запись не подтверждена"
 			continue
 		}
 		// Ячейки 0x000..0x004 — служебная область команд/идентификации: запись

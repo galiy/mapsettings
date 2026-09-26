@@ -4,13 +4,26 @@ VERSION ?= dev
 LDFLAGS  = -X main.version=$(VERSION)
 BINARY   = mapsettings
 
-.PHONY: all build test vet fmt clean cross
+.PHONY: all build build-debug dbg-order dbg-index test vet fmt clean cross
 
 all: build
 
 ## build — нативная сборка в ./mapsettings
 build:
 	go build -ldflags "$(LDFLAGS)" -o $(BINARY) .
+
+## build-debug — сборка с отладочной нумерацией элементов интерфейса (№N)
+build-debug:
+	go build -ldflags "$(LDFLAGS) -X main.debug=true" -o $(BINARY) .
+
+## dbg-order — дополнить фиксированный порядок номеров новыми id (append-only)
+dbg-order: build
+	./$(BINARY) -gen-dbgorder
+
+## dbg-index — обновить индекс отладочных номеров (.kilo/dbg-index.txt)
+dbg-index: build
+	@mkdir -p .kilo
+	./$(BINARY) -dbgindex > .kilo/dbg-index.txt
 
 ## test — тесты
 test:

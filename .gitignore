@@ -3,13 +3,16 @@
 /mapsettings.exe
 map-settings
 
-# Локальный конфиг программы (режим/IP/порт, параметры запуска) — не коммитить
+# Локальный конфиг программы (IP/порт, параметры запуска) — не коммитить
 mapsettings.json
 mapsettings.local.json
 *.local.json
 
 # Python-кэш генератора каталога
 __pycache__/
+
+# Индекс отладочных номеров интерфейса (генерируется: make dbg-index)
+.kilo/dbg-index.txt
 
 # Кросс-сборки
 /dist/
