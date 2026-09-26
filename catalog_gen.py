@@ -156,6 +156,143 @@ NAME_OVERRIDE = {
     "_T_AccDisch": "Обратный отсчёт работы на низком напряжении АКБ",
 }
 
+# Ячейки расширения `_dop` (документ: «используются совместно с такими же
+# названиями без окончания _dop»). Сливаются с основной ячейкой в один
+# редактируемый параметр; отдельная строка `_dop` из каталога убирается.
+#   kind — формула объединения: u16_hi (main + dop<<8), uacc10
+#   ((main<<UACC)+dop)/10, pow2 (main*100, dop=1 удваивает).
+LINK_PAIRS = {
+    "_LCD_CAcc": {"dop": "_LCD_CAcc_dop", "kind": "cacc",
+                  "scale": 1.0, "unit": "А·ч", "min": 0, "max": 1638375},
+    "_LCD_UAccMin": {"dop": "_LCD_UAccMin_dop", "kind": "uacc10",
+                     "scale": 0.1, "unit": "В", "min": 0, "max": 229.5},
+    "_LCD_UAccMinNetGen": {"dop": "_LCD_UAccMinNetGen_dop", "kind": "uacc10",
+                           "scale": 0.1, "unit": "В", "min": 0, "max": 229.5},
+    "_LCD_UAccChMax": {"dop": "_LCD_UAccChMax_dop", "kind": "uacc10",
+                       "scale": 0.1, "unit": "В", "min": 0, "max": 229.5},
+    "_LCD_UAccChBUF": {"dop": "_LCD_UAccChBUF_dop", "kind": "uacc10",
+                       "scale": 0.1, "unit": "В", "min": 0, "max": 229.5},
+    "_LCD_UAccChStart": {"dop": "_LCD_UAccChStart_dop", "kind": "uacc10",
+                         "scale": 0.1, "unit": "В", "min": 0, "max": 229.5},
+    "_LCD_UAccDizStart": {"dop": "_LCD_UAccDizStart_dop", "kind": "uacc10",
+                          "scale": 0.1, "unit": "В", "min": 0, "max": 229.5},
+    "_LCD_NetMaxPow": {"dop": "_LCD_NetMaxPow_dop", "kind": "pow2",
+                       "scale": 100.0, "unit": "Вт", "min": 0, "max": 51000},
+    # Второй вход использует тот же флаг ×2 (как в web-UI «Малины»).
+    "_LCD_DizelMaxPow": {"dop": "_LCD_NetMaxPow_dop", "kind": "pow2",
+                         "scale": 100.0, "unit": "Вт", "min": 0, "max": 51000},
+    # Время работы на разряженном АКБ: младший байт 0x80 + старший 0x26.
+    "_T_ACCDISCH": {"dop": "_T_AccDisch_ExtH", "kind": "u16_hi",
+                    "scale": 1.0, "unit": "сек", "min": 0, "max": 65535},
+    # Токи фаз по АКБ: (L + (H&0x7F)*256)/10, бит7 H — заряд (знак).
+    "_I_Akb_MAP_faz1L": {"dop": "_I_Akb_MAP_faz1H", "kind": "i16_hi7",
+                         "scale": 0.1, "unit": "А", "min": -3276.8, "max": 3276.7},
+    "_I_Akb_MAP_faz2L": {"dop": "_I_Akb_MAP_faz2H", "kind": "i16_hi7",
+                         "scale": 0.1, "unit": "А", "min": -3276.8, "max": 3276.7},
+    "_I_Akb_MAP_faz3L": {"dop": "_I_Akb_MAP_faz3H", "kind": "i16_hi7",
+                         "scale": 0.1, "unit": "А", "min": -3276.8, "max": 3276.7},
+}
+
+# Форматы массивов пар «младший/старший байт» с маской старшего бита.
+ARRAY_FORMATS = [
+    # (префикс ячейки, high_mask, scale, unit)
+    ("_UakbCell", 0x7F, 0.01, "В"),     # напряжение банок: /100
+    ("_I_Akb_MPPT", 0x7F, 0.0625, "А"), # ток заряда MPPT: /16
+]
+
+# Рекомендованные краткие русские имена (переопределяют сгенерированные).
+RECOMMENDED_NAMES = {
+    '_CAP_OnOff': 'САП-Заряд (управление генератором)',
+    '_CIChargeAbsorb': 'Мин. ток дозаряда, ×C',
+    '_Device': 'Код устройства',
+    '_FrozenUAccAfterDisChage': 'Замораживать напряжение после разряда',
+    '_I_Chage_Korr': 'Коррекция датчика тока заряда',
+    '_LCD_AddDevice': 'Режим RS3 (RS485)',
+    '_LCD_BMSFunk': 'Внешние BMS и/или MPPT',
+    '_LCD_ChargeAlg': 'Алгоритм заряда',
+    '_LCD_DizelMaxPow': 'Макс. мощность II входа',
+    '_LCD_MAP_Sync': 'Синхронизация/параллель (доп. плата)',
+    '_LCD_MAP_iFaze': 'Число фаз (доп. плата)',
+    '_LCD_MPPTNum': 'Кол-во MPPT',
+    '_LCD_NETAlg': 'Алгоритм работы с сетью',
+    '_LCD_Net2': 'Второй вход 220 В',
+    '_LCD_NetDizel': 'Источник сети основного входа',
+    '_LCD_NetMaxPow': 'Максимальная мощность сети',
+    '_LCD_NetUpECO': 'Подкачка по ЭКО',
+    '_LCD_NetUpLoad': 'Подкачка сети по мощности',
+    '_LCD_PercentECOMinGen': 'Процент подкачки ЭКО, %',
+    '_LCD_RS485_Num': 'Кол-во устройств RS3',
+    '_LCD_RSBAUD': 'Скорость RS1 (USB)',
+    '_LCD_RSBAUD485': 'Скорость RS3 (RS485)',
+    '_LCD_RS_Protocol': 'Протокол RS1 (USB)',
+    '_LCD_RasberyON': 'Малина (Raspberry) включена',
+    '_LCD_Rele1_Funk': 'Функция реле 1',
+    '_LCD_Rele1_GistInv': 'Реле1: гистерезис',
+    '_LCD_Rele1_U_T_maxInv': 'Реле1: верхний порог/коррекция',
+    '_LCD_Rele1_U_T_min': 'Реле1: порог/задержка (нижн.)',
+    '_LCD_Rele2_Funk': 'Функция реле 2',
+    '_LCD_Rele2_GistInv': 'Реле2: гистерезис',
+    '_LCD_Rele2_U_T_maxInv': 'Реле2: верхний порог/коррекция',
+    '_LCD_Rele2_U_T_min': 'Реле2: порог/задержка (нижн.)',
+    '_LCD_SensLoad': 'Генерация только при нагрузке',
+    '_LCD_SlaveMAPNum': 'Кол-во параллельных МАП',
+    '_LCD_T_MAXCharge': 'Макс. время заряда, ч',
+    '_LCD_TimeEcoEnd': 'Окончание минимального тарифа',
+    '_LCD_TimeEcoStart': 'Начало минимального тарифа',
+    '_LCD_TypeSin': 'Точность синуса на выходе',
+    '_LCD_UAccChBUF': 'Буферное напряжение заряда',
+    '_LCD_UAccChMax': 'Напряжение окончания заряда',
+    '_LCD_UAccChStart': 'Напряжение старта заряда',
+    '_LCD_UAccDizStart': 'Напряжение старта дизель-генератора',
+    '_LCD_UAccMin': 'Минимальное напряжение АКБ',
+    '_LCD_UAccMinNetGen': 'Порог ЭКО: переход на сеть',
+    '_LCD_UMAP220_NEED': 'Выходное напряжение стабилизации',
+    '_LCD_UNET2Down': 'Нижний порог напряжения II входа',
+    '_LCD_UNET2Up': 'Верхний порог напряжения II входа',
+    '_NUM_Overload': 'Число попыток по перегрузке',
+    '_No3FazeMotor': 'Коррекция синусоид 3 фаз (моторы)',
+    '_POW': 'Мощность устройства',
+    '_POW_Korr': 'Коррекция датчика мощности',
+    '_PowAccNom': 'Номинальная мощность, %',
+    '_RAM_END_L': 'Конечный адрес RAM',
+    '_TFT_CIChargeSOC95': 'Ток заряда при SOC 95%',
+    '_TFT_SOC_DisCharge': 'Отключение генерации по SOC',
+    '_TFT_SOC_DizStart': 'Старт дизель-генератора по SOC',
+    '_TFT_SOC_StartCharge': 'Старт заряда по SOC',
+    '_T_ACCDISCH': 'Время работы на разряженном АКБ, с',
+    '_T_CHARGE': 'Задержка перехода на заряд, с',
+    '_T_CHARGE_Umax': 'Макс. время дозаряда, мин',
+    '_T_CHARGE_UmaxECO_diz': 'Макс. время дозаряда от генератора/MPPT, мин',
+    '_T_MaxLiIonBMS': 'Время дозаряда при BMS, мин',
+    '_T_NET_ON': 'Время стабилизации сети, с',
+    '_T_NOMINAL': 'Время работы выше номинала, мин',
+    '_TchEco_14day': 'Периодичность планового заряда, дн.',
+    '_TempTopToBMS': 'Сторонние BMS / датчик тора (устар.)',
+    '_UACC': 'Напряжение АКБ (число блоков 12–96 В)',
+    '_UAccAfterDisChage': 'Напряжение возобновления генерации',
+    '_VerPO': 'Версия ПО',
+    '_VerPlatNet': 'Версия сетевой платы',
+    '_VerPlatPic': 'Версия платы процессора (PIC)',
+    '_VerPlatPowDop': 'Признаки силовой платы (Low/Hi/Hybrid)',
+    '_VerPow': 'Версия силовой платы',
+    '_WATCH2': 'Резерв внутреннего времени',
+    '_del_UAccChBUF_24h': 'Снижение буфера через 24 ч',
+    '_detTforDopRele': 'Датчик температуры для внешнего реле',
+    '_fUAcc_Korr': 'Коррекция датчика напряжения АКБ',
+    '_minTarifAnCh': 'Завершать заряд при выходе из тарифа',
+    '_minTarifCh': 'Переходить на заряд при входе в тариф',
+}
+
+# Настройки реле 3 и реле II — по аналогии с реле 1/2.
+RECOMMENDED_NAMES.update({
+    '_LCD_Rele3_L1': 'Реле3: порог/задержка (нижн.)',
+    '_LCD_Rele3_L2': 'Реле3: верхний порог/коррекция',
+    '_LCD_Rele3_Gist': 'Реле3: гистерезис',
+    '_LCD_ReleII_L1': 'РелеII: порог/задержка (нижн.)',
+    '_LCD_ReleII_L2': 'РелеII: верхний порог/коррекция',
+    '_LCD_ReleII_Gist': 'РелеII: гистерезис',
+})
+
 # Ручные уточнения для отдельных ячеек. Нужны там, где перечисление значений в
 # документе идёт на СЛЕДУЮЩЕЙ строке (генератор берёт описание только из строки
 # определения), либо где перечисление разобрано ошибочно. Ключ — имя ячейки:
@@ -182,6 +319,345 @@ CELL_OVERRIDES = {
         "desc_extra": "Младшие 5 бит — целая часть, старшие 3 бита — дробная "
                       "(после точки): Ver = (значение & 0x1F).(значение >> 5).",
     },
+    # Пары «основная ячейка + _dop» из документа: правятся совместно, dop —
+    # дополнительный байт расширения (см. LINK_PAIRS ниже).
+
+    # 24-битные счётчики энергии (L/H/HH) — значение в кВт·ч с /100.
+    "_M_POWhourNET_L": {"scale": 0.01, "unit": "кВт·ч"},
+    "_M_POWhourMAP_L": {"scale": 0.01, "unit": "кВт·ч"},
+    "_M_POWhourMAPCharge_L": {"scale": 0.01, "unit": "кВт·ч"},
+    # 32-битный знаковый счётчик энергии.
+    "_M_POWhourNET_sign": {"scale": 0.01, "unit": "кВт·ч"},
+    # Внутреннее время _WATCH — 16-битное поле.
+    "_WATCH": {
+        "name": "Внутреннее время (день/месяц/год)",
+        "fields": [
+            {"label": "День", "lsb": 0, "bits": 5},
+            {"label": "Месяц", "lsb": 5, "bits": 4},
+            {"label": "Год (2000+)", "lsb": 9, "bits": 6},
+        ],
+        "desc_extra": "Биты: 0–4 — день месяца; 5–8 — месяц; 9–14 — год "
+                      "(до 2063); 15 — резерв. Часы и десятки минут — в "
+                      "_LCD_TimeCyr.",
+    },
+    # Скорости RS232 (младший ниббл) и загрузки (старший ниббл).
+    "_RSBAUD_Rasb_Load": {
+        "name": "Скорости RS232 и загрузки", "columns": 2,
+        "fields": [
+            {"label": "RS232", "lsb": 0, "bits": 4,
+             "enum": {"0": "2400", "1": "9600", "2": "19200", "3": "57600",
+                      "4": "115200", "5": "312500", "6": "625000"}},
+            {"label": "Загрузка", "lsb": 4, "bits": 4,
+             "enum": {"0": "2400", "1": "9600", "2": "19200", "3": "57600",
+                      "4": "115200", "5": "312500", "6": "625000"}},
+        ],
+        "desc_extra": "Младшие 4 бита — скорость RS232, старшие 4 — скорость "
+                      "загрузки через PC.",
+    },
+    # Входы сети для доп. реле R1–R4, по 2 бита на реле.
+    "_ReleNetNum": {
+        "name": "Входы сети для доп. реле R1–R4", "columns": 4,
+        "fields": [
+            {"label": "R1", "lsb": 0, "bits": 2,
+             "enum": {"0": "по первому", "1": "по второму", "2": "по обоим"}},
+            {"label": "R2", "lsb": 2, "bits": 2,
+             "enum": {"0": "по первому", "1": "по второму", "2": "по обоим"}},
+            {"label": "R3", "lsb": 4, "bits": 2,
+             "enum": {"0": "по первому", "1": "по второму", "2": "по обоим"}},
+            {"label": "R4", "lsb": 6, "bits": 2,
+             "enum": {"0": "по первому", "1": "по второму", "2": "по обоим"}},
+        ],
+        "desc_extra": "По 2 бита на реле R1…R4: 0 — по первому входу сети, "
+                      "1 — по второму, 2 — по обоим.",
+    },
+
+    # Состояние управления доп. реле: младшие биты — реле1..4 (1/2/4/8).
+    "_Status_RELEdop": {
+        "name": "Управление доп. реле",
+        "bits": [
+            {"bit": 0, "name": "Реле1 (состояние управления)"},
+            {"bit": 1, "name": "Реле2 (состояние управления)"},
+            {"bit": 2, "name": "Реле3 (Титанатор)"},
+            {"bit": 3, "name": "Реле4 (Титанатор; доп. плата или силовое реле II входа)"},
+        ],
+        "desc_extra": "Младшие биты: 0 — реле1, 1 — реле2, 2 — реле3, 3 — реле4 "
+                      "(в модели Титанатор старшие биты показывают инверсию реле).",
+    },
+
+    # Снижение буферного напряжения через 24ч: в ячейке код, справа пересчёт в В.
+    "_del_UAccChBUF_24h": {
+        "scale": 1.0, "unit": "", "min": 0, "max": 255,
+        "desc_extra": "В ячейке хранится код; физическое значение: "
+                      "U(В) = (код << UACC)/10 (по умолчанию код 5 → 2,0 В при 48 В).",
+    },
+
+    # Заряд КЭС (MPPT) до буфера: период в днях (код = дни*12, шаг 2 часа).
+    "_TCh_MPPT_GRID52": {
+        "name": "Заряд КЭС (MPPT) до буфера, дней",
+        "format": "days12", "scale": 1.0, "unit": "дн.", "min": 0, "max": 255,
+        "desc_extra": "Период принудительного заряда КЭС/MPPT от сети 220 В, если "
+                      "напряжение АКБ не достигало буферного. Значение в днях "
+                      "(код = дни×12); 0 — выключено. Значение 255 (не задано) "
+                      "показывается как есть.",
+    },
+    # Профилактика топливного генератора: период в днях (код = дни*12).
+    "_TdizProfilact_day": {
+        "name": "Профилактика топливного генератора, дней",
+        "scale": 1.0 / 12.0, "unit": "дн.", "min": 0, "max": 21.25,
+        "desc_extra": "Периодический запуск топливного генератора для профилактики "
+                      "(если доп. реле настроено на генератор или выбран АВР). "
+                      "Значение в днях (код = дни×12); 0 — выключено.",
+    },
+
+    # Текущая мощность сети: код = кВт×8×10 → кВт = код/80.
+    "_PNET_8": {
+        "name": "Текущая мощность сети, кВт",
+        "scale": 1.0 / 80.0, "unit": "кВт", "min": 0, "max": 819.19,
+        "desc_extra": "Текущая мощность сети: кВт = код/80 (код = кВт×8×10). "
+                      "Знак определяется ячейкой _PNET_Sign_P=0x587.",
+    },
+
+    # Реальное напряжение ЭКО (2 байта) — в десятых вольта.
+    "_UAccMinNetGen_S": {
+        "scale": 0.1, "unit": "В", "min": 0, "max": 6553.5,
+        "desc_extra": "Реальное напряжение ЭКО в вольтах (значение/10), "
+                      "скорректированное по буферному напряжению.",
+    },
+
+    # Признак записи в EEPROM: что именно менялось (биты), обнуляется записью 0.
+    "_put_eeprom": {
+        "name": "Признак записи в EEPROM",
+        "desc_extra": "Сообщает, что была запись в EEPROM (извне или самим МАП). "
+                      "Биты: 0 — запись в EEPROM; 1 — сменился режим (_MODE=0x50); "
+                      "2 — изменены настройки (0x138–0x1CF); 3 — счётчики ошибок "
+                      "(0x48–0x4F); 4 — обновлено текущее время (_LCD_TimeCyr). "
+                      "После чтения обнулить — записать 0.",
+    },
+
+    # Частота выходного напряжения: F(Гц)=6250/ThFMAP.
+    "_ThFMAP": {
+        "format": "freq", "unit": "Гц", "min": 0, "max": 255,
+        "desc_extra": "Частота выводится в герцах: F(Гц)=6250/код "
+                      "(например, код 125 → 50 Гц).",
+    },
+
+    # Кол-во параллельных MPPT (0…16 по документу).
+    "_LCD_MPPTNum": {
+        "name": "Кол-во MPPT",
+        "unit": "шт", "columns": 4, "show_value": True,
+        "enum": dict([("0", "нет MPPT")] + [(str(i), "%d MPPT" % i) for i in range(1, 17)]),
+        "desc_extra": "Количество параллельных MPPT (0 — нет, максимум 16).",
+    },
+
+    # АВР через доп. реле: выкл / Лето / Зима.
+    "_AVR_On": {
+        "name": "АВР через доп. реле",
+        "enum": {"0": "Выкл", "1": "Лето", "2": "Зима"},
+        "desc_extra": "0 — выключен, 1 — Лето, 2 — Зима (работа с топливным "
+                      "генератором через доп. реле).",
+    },
+    # Очередность избытка мощности для реле R1–R4: по 2 бита на реле.
+    "_ReleIzbNum": {
+        "name": "Очередность избытка мощности (R1–R4)", "columns": 4,
+        "fields": [
+            {"label": "R1", "lsb": 0, "bits": 2,
+             "enum": {"0": "1-й избыток", "1": "2-й избыток", "2": "3-й избыток", "3": "4-й избыток"}},
+            {"label": "R2", "lsb": 2, "bits": 2,
+             "enum": {"0": "1-й избыток", "1": "2-й избыток", "2": "3-й избыток", "3": "4-й избыток"}},
+            {"label": "R3", "lsb": 4, "bits": 2,
+             "enum": {"0": "1-й избыток", "1": "2-й избыток", "2": "3-й избыток", "3": "4-й избыток"}},
+            {"label": "R4", "lsb": 6, "bits": 2,
+             "enum": {"0": "1-й избыток", "1": "2-й избыток", "2": "3-й избыток", "3": "4-й избыток"}},
+        ],
+        "desc_extra": "По 2 бита на реле R1…R4: 0 — 1-й избыток, 1 — 2-й, "
+                      "2 — 3-й, 3 — 4-й.",
+    },
+
+    # Функция реле 1 (модель Титанатор; коды 6/7 — таймеры, 8 — внешнее управление).
+    "_LCD_Rele1_Funk": {
+        "name": "Функция реле 1",
+        "enum": {
+            "0": "Выключена", "1": "ПускБ/ДизГенер — пуск дизель-генератора",
+            "2": "По напряжению АКБ", "3": "По температуре АКБ",
+            "4": "По времени", "5": "По событию сети 220 В",
+            "6": "Таймер от реле-1 (заслонка)",
+            "7": "Таймер от реле+1 (стартер)",
+            "8": "Внешнее управление (через _Status_RELEdop)",
+            "9": "По событию BMS", "10": "Избыток мощности MPPT",
+            "11": "Избыток мощности сети", "12": "По внешнему цифровому входу",
+            "13": "По мощности выхода",
+        },
+        "desc_extra": "8 — реле управляется внешней программой через _Status_RELEdop; "
+                      "остальные варианты — условия срабатывания (индикация режима).",
+    },
+
+    # Функции реле 3 и реле II входа — те же варианты, что у реле 1/2.
+    "_LCD_Rele3_Funk": {
+        "name": "Функция реле 3",
+        "enum": {
+            "0": "Выключена", "1": "ПускБ/ДизГенер — пуск дизель-генератора",
+            "2": "По напряжению АКБ", "3": "По температуре АКБ",
+            "4": "По времени", "5": "По событию сети 220 В",
+            "6": "Таймер от реле-1 (заслонка)",
+            "7": "Таймер от реле+1 (стартер)",
+            "8": "Внешнее управление (через _Status_RELEdop)",
+            "9": "По событию BMS", "10": "Избыток мощности MPPT",
+            "11": "Избыток мощности сети", "12": "По внешнему цифровому входу",
+            "13": "По мощности выхода",
+        },
+        "desc_extra": "Варианты — как у реле 1 (модель Титанатор).",
+    },
+    "_LCD_ReleII_Funk": {
+        "name": "Функция реле II входа сети",
+        "enum": {
+            "0": "Выключена", "1": "ПускБ/ДизГенер — пуск дизель-генератора",
+            "2": "По напряжению АКБ", "3": "По температуре АКБ",
+            "4": "По времени", "5": "По событию сети 220 В",
+            "6": "Таймер от реле-1 (заслонка)",
+            "7": "Таймер от реле+1 (стартер)",
+            "8": "Внешнее управление (через _Status_RELEdop)",
+            "9": "По событию BMS", "10": "Избыток мощности MPPT",
+            "11": "Избыток мощности сети", "12": "По внешнему цифровому входу",
+            "13": "По мощности выхода",
+        },
+        "desc_extra": "Варианты — как у реле 1 (модель Титанатор).",
+    },
+
+    # Функция реле 2 — те же варианты, что у реле 1 (по документу «аналогично»).
+    "_LCD_Rele2_Funk": {
+        "name": "Функция реле 2",
+        "enum": {
+            "0": "Выключена",
+            "1": "ПускБ/ДизГенер — пуск дизель-генератора",
+            "2": "По напряжению АКБ",
+            "3": "По температуре АКБ",
+            "4": "По времени",
+            "5": "По событию сети 220 В",
+            "6": "Таймер от реле-1 (заслонка)",
+            "7": "Таймер от реле+1 (стартер)",
+            "8": "Внешнее управление (через _Status_RELEdop)",
+            "9": "По событию BMS",
+            "10": "Избыток мощности MPPT",
+            "11": "Избыток мощности сети",
+            "12": "По внешнему цифровому входу",
+            "13": "По мощности выхода",
+        },
+        "desc_extra": "Варианты — как у функции реле 1.",
+    },
+
+    # Признаки силовой платы — несколько битовых контролов.
+    "_VerPlatPowDop": {
+        "bits": [
+            {"bit": 1, "name": "плата Low (0) / Hi (1)"},
+            {"bit": 7, "name": "Hybrid (гибрид)"},
+        ],
+        "desc_extra": "Бит1 — тип платы: 0 — Low, 1 — Hi; бит7 — Hybrid (гибрид).",
+    },
+    "_LCD_RSBAUD": {"name": "Скорость RS1 (USB)"},
+    # Режим RS3 (RS485): slave ModBus или master для модульных АКБ.
+    "_LCD_AddDevice": {
+        "name": "Режим RS3 (RS485)",
+        "enum": {
+            "0": "нет устройств на доп. плате",
+            "1": "RS485(232)_Sl — протокол Slave (ModBus RTU)",
+            "2": "Vektor485_BMS (ModBus) Master",
+            "3": "Seplos485_BMS Master",
+            "4": "Dyness485_BMS Master",
+        },
+        "desc_extra": "0 — нет устройств; 1 — ведомый (Slave, ModBus RTU по RS3); "
+                      "2–4 — ведущий (Master) для модульных АКБ Vektor/Seplos/Dyness.",
+    },
+
+    # Включение «Малины» — выключатель (0/1).
+    "_LCD_RasberyON": {
+        "enum": {"0": "выключено", "1": "включено"},
+        "desc_extra": "0 — выключено, 1 — включено.",
+    },
+    # Протокол RS1 (USB) — варианты.
+    "_LCD_RS_Protocol": {
+        "enum": {"0": "Протокол MicroArt (USB)", "1": "ModBus RTU (USB)",
+                 "2": "ModBus RTU (RS485)"},
+        "desc_extra": "0 — Протокол MicroArt (USB); 1 — ModBus RTU (USB); "
+                      "2 — ModBus RTU (RS485).",
+    },
+    # Скорость RS3 (RS485) — варианты бод.
+    "_LCD_RSBAUD485": {
+        "enum": {"0": "2400", "1": "9600", "2": "19200", "3": "57600",
+                 "4": "115200", "5": "312500", "6": "625000"},
+        "unit": "бод",
+        "desc_extra": "Скорость RS3 (RS485) в бод.",
+    },
+
+    # Процент мощности подкачки ЭКО — в процентах от максимальной мощности.
+    "_LCD_PercentECOMinGen": {
+        "unit": "%", "min": 0, "max": 100,
+        "desc_extra": "Значение в процентах от максимальной мощности.",
+    },
+
+    # Датчик температуры для внешнего реле — 4 варианта.
+    "_detTforDopRele": {
+        "enum": {
+            "0": "датчик температуры АКБ (по умолчанию)",
+            "1": "датчик температуры тора (трансформатора)",
+            "2": "датчик температуры силовых транзисторов",
+            "3": "внешний датчик температуры (Титанатор)",
+        },
+        "desc_extra": "0 — АКБ; 1 — тор (трансформатор); 2 — силовые транзисторы; "
+                      "3 — внешний датчик (Титанатор).",
+    },
+
+    # Мощность на продажу: код*0.1 кВт (50 → 5 кВт).
+    "_PNET_Prodag_MAX": {
+        "scale": 0.1, "unit": "кВт", "min": 0, "max": 25.5,
+        "desc_extra": "Значение в кВт: код*0.1 (по умолчанию 50 → 5 кВт).",
+    },
+
+    # Время тарифа: часы в старших 5 битах, десятки минут в младших 3 (ЧЧ:ММ).
+    "_LCD_TimeEcoStart": {
+        "format": "hhmm", "unit": "", "min": 0, "max": 255,
+        "desc_extra": "Отображается как ЧЧ:ММ (шаг 10 минут).",
+    },
+    "_LCD_TimeEcoEnd": {
+        "format": "hhmm", "unit": "", "min": 0, "max": 255,
+        "desc_extra": "Отображается как ЧЧ:ММ (шаг 10 минут).",
+    },
+
+    # Максимальное время заряда: T(ч) = raw*16/60 (в ячейке — 16-минутные шаги).
+    "_LCD_T_MAXCharge": {
+        "scale": 16.0 / 60.0, "unit": "ч", "min": 0, "max": 68,
+        "desc_extra": "Значение в часах: T(ч) = код*16/60 (по умолчанию 90 → 24 ч).",
+    },
+
+    # Напряжение начала генерации после разряда: U(В) = (raw << UACC)/10.
+    "_UAccAfterDisChage": {
+        "link": {"addr": 0x5B, "kind": "uacc"},
+        "scale": 1.0, "unit": "В", "min": 0, "max": 229.5,
+        "desc_extra": "Отображается в вольтах: U(В) = (значение << UACC)/10.",
+    },
+
+    # Минимальный ток дозаряда — в долях ёмкости АКБ (код/100 = ×Cакб).
+    "_CIChargeAbsorb": {
+        "name": "Мин. ток дозаряда, ×C",
+        "scale": 0.01, "unit": "C", "min": 0, "max": 2.55,
+        "desc_extra": "Задаётся в долях ёмкости АКБ: 0.1 = 0,1·Cакб (при 475 А·ч "
+                      "это 47,5 А). Ток в амперах = Cакб · значение.",
+    },
+
+    # Ток первой ступени задаётся в долях ёмкости АКБ (код/100 = ×Cакб).
+    "_LCD_CIChargeStart": {
+        "name": "Ток первой ступени, ×C",
+        "scale": 0.01, "unit": "C", "min": 0, "max": 2.55,
+        "desc_extra": "Значение задаётся в долях ёмкости АКБ: 0.1 = 0,1·Cакб "
+                      "(при 475 А·ч это 47,5 А). Ток в амперах = Cакб · значение.",
+    },
+
+    "_KorrTempAkb": {
+        "name": "Коррекция конца заряда от температуры",
+        "desc_extra": "Бит0 — коррекция напряжения конца заряда от температуры; "
+                      "бит1 — зарезервирован (заряд при температуре ниже 0 °C "
+                      "током не более 0,2C, в текущих моделях не используется).",
+    },
+
     # Только для чтения (раздел «Только на Чтение», адреса 0x00–0x02):
     # делаем значения человеко-читаемыми.
     "_Device": {
@@ -223,8 +699,10 @@ CELL_OVERRIDES = {
     },
     "_SerialNum3": {
         "name": "Серийный номер: индекс (буква ASCII)",
-        "desc_extra": "Индекс серийного номера — буква ASCII. Серийный номер "
-                      "МАП может использоваться как уникальный ID.",
+        "format": "char",
+        "desc_extra": "Индекс серийного номера — буква ASCII (отображается "
+                      "символом). Серийный номер МАП может использоваться как "
+                      "уникальный ID.",
     },
     "_Language": {
         "name": "Язык меню",
@@ -412,7 +890,8 @@ EXPLICIT_GROUP = {
     "_PLoad_H": "Нагрузка и мощность",
     "_PLoad_8": "Нагрузка и мощность",
     "_PowAccNom": "Нагрузка и мощность",
-    "_LCD_NetMaxPow": "Сеть",
+    "_LCD_NetMaxPow": "Заряд АКБ (настройки)",
+    "_LCD_UAccMinNetGen": "Заряд АКБ (настройки)",
     "_LCD_NetMaxPow_dop": "Сеть",
     # --- Температуры ---
     "_Temp_Grad0": "Температуры",
@@ -421,7 +900,7 @@ EXPLICIT_GROUP = {
     "_Temp_off": "Температуры",
     "_TakbCell": "Температуры",
     "_Takb_MPPT": "Температуры",
-    "_KorrTempAkb": "Температуры",
+    "_KorrTempAkb": "Заряд АКБ (настройки)",
     "_detTforDopRele": "Реле и внешние устройства",
     # --- Ошибки / сброс ---
     "_RSErrSis": "Ошибки и предупреждения",
@@ -495,7 +974,7 @@ EXPLICIT_GROUP = {
     "_TFT_SOC_DisCharge": "Заряд АКБ (настройки)",
     "_TFT_SOC_StartCharge": "Заряд АКБ (настройки)",
     "_TFT_SOC_DizStart": "Заряд АКБ (настройки)",
-    "_LCD_UAccDizStart": "Реле и внешние устройства",
+    "_LCD_UAccDizStart": "Заряд АКБ (настройки)",
     "_LCD_UAccDizStart_dop": "Реле и внешние устройства",
     # --- Реле / внешние устройства ---
     "_AVR_On": "Реле и внешние устройства",
@@ -585,11 +1064,49 @@ EXPLICIT_GROUP = {
 RW_RAM = {
     "_put_eeprom",
     "_Status_RELEdop",
-    "_MPPT_toCh",
     "_RCON_img",
     "_RCON_img_L",
     "_RCON_img_H",
 }
+
+# Карты функций доп. реле по моделям (тексты без номера — номер добавит UI).
+RELAY_FUNK_TITANATOR = {
+    "0": "Выключена",
+    "1": "ПускБ/ДизГенер — пуск дизель-генератора",
+    "2": "По напряжению АКБ",
+    "3": "По температуре АКБ",
+    "4": "По времени",
+    "5": "По событию сети 220 В",
+    "6": "Таймер от реле-1 (заслонка)",
+    "7": "Таймер от реле+1 (стартер)",
+    "8": "Внешнее управление (через _Status_RELEdop)",
+    "9": "По событию BMS",
+    "10": "Избыток мощности MPPT",
+    "11": "Избыток мощности сети",
+    "12": "По внешнему цифровому входу",
+    "13": "По мощности выхода",
+}
+RELAY_FUNK_DOMINATOR = {
+    "0": "Выключена",
+    "1": "ПускБ/ДизГенер — пуск дизель-генератора",
+    "2": "По напряжению АКБ",
+    "3": "По температуре АКБ",
+    "4": "По времени",
+    "5": "Пропала сеть",
+    "6": "Трансляция сети",
+    "7": "В режиме заряда",
+    "8": "Внешнее управление (через _Status_RELEdop)",
+    "9": "Нет 220 В на выходе",
+}
+for _cell in ("_LCD_Rele1_Funk", "_LCD_Rele2_Funk", "_LCD_Rele3_Funk", "_LCD_ReleII_Funk"):
+    CELL_OVERRIDES[_cell] = {
+        "name": CELL_OVERRIDES.get(_cell, {}).get("name"),
+        "enum_by_mode": {"titanator": RELAY_FUNK_TITANATOR, "dominator": RELAY_FUNK_DOMINATOR},
+        "min": 0, "max": 13,
+        "desc_extra": "8 — реле управляется внешней программой через _Status_RELEdop; "
+                      "остальные варианты — условия срабатывания (индикация режима). "
+                      "Набор вариантов зависит от модели МАП.",
+    }
 
 # Единицы измерения, встречающиеся в формулах документа.
 UNIT_MAP = {
@@ -825,6 +1342,13 @@ def parse_txt(txt_path, green_names):
         if stripped.startswith("Меню "):
             flush()
             menu_group = group
+            if pending:
+                block.append(raw_line)
+            continue
+        if pending and SECTION_FLUSH_RE.match(stripped):
+            # Начало новой секции/врезки — не относим её текст к предыдущей ячейке.
+            flush()
+            continue
         if pending:
             block.append(raw_line)
     flush()
@@ -840,6 +1364,44 @@ def menu_group_for(line_no):
 
 NAME_SEP_RE = re.compile(r"\s[–—-]\s")
 CYR_RE = re.compile(r"[\u0400-\u04FF]")
+# Начало новой секции/врезки: такие строки не продолжают описание ячейки.
+SECTION_FLUSH_RE = re.compile(
+    r"^(Меню|Приложение|Примечание|Таблица|Описание Ячеек|"
+    r"Только на Чтение|На Чтение|На чтение)\b"
+)
+# Строка-вариант/бит в перечислении — уже попадает в enum/bits, в описание не дублируем.
+ENUM_BIT_LINE_RE = re.compile(
+    r"^\s*(?:[-*]?\s*\d+\s*[-–—=:]|бит\s*\d+|bit\s*\d+)", re.I
+)
+# Строки кода/примеров программ — в описание не включаем.
+CODE_LINE_RE = re.compile(
+    r"[{};]|#include|//|\bunsigned\b|\bshort\b|\bchar\b|\bint\b|"
+    r"\bfor\s*\(|\bif\s*\(|\bwhile\s*\(|\bdefine\b", re.I
+)
+
+
+def continuation_notes(block_text, desc):
+    """Текст документа ниже определения (до следующего параметра/секции),
+    не вошедший в описание: дополняет desc человекочитаемыми строками."""
+    d = re.sub(r"\s+", " ", desc or "")
+    out = []
+    for ln in (block_text or "").split("\n"):
+        s = re.sub(r"\s+", " ", ln).strip()
+        if len(s) < 4:
+            continue
+        if SECTION_FLUSH_RE.match(s):
+            continue
+        if ENUM_BIT_LINE_RE.match(s):
+            continue
+        if CODE_LINE_RE.search(s):
+            continue
+        if not CYR_RE.search(s):
+            continue
+        if s in d:
+            continue
+        d += " " + s
+        out.append(s)
+    return " ".join(out)
 RANGE_TAIL_RE = re.compile(r"^[-–—]?\s*0?[xX][0-9A-Fa-f]{1,4}\b")
 BRACE_RE = re.compile(r"^\s*\{[^{}]*\}")
 
@@ -955,13 +1517,13 @@ def build_record(raw, addr, tail, block_text, line_no, menu_group, green_names):
         if m:
             end = int(m.group(1), 16)
     if end is not None and end >= addr:
-        width = 2
+        width = min(end - addr + 1, 4)
         order = "lh"  # порядок байт по умолчанию (младший по младшему адресу)
 
     if kind == "ram":
         access = "rw" if raw in RW_RAM else "ro"
     else:
-        if addr <= 0x04 or raw in ("_UAccAfterDisChage", "_LCD_Vers"):
+        if addr <= 0x04 or raw in ("_LCD_Vers",):
             access = "ro"
         else:
             access = "rw"
@@ -973,6 +1535,8 @@ def build_record(raw, addr, tail, block_text, line_no, menu_group, green_names):
 
     # Ручные уточнения (перечисления на следующей строке документа и т.п.).
     fmtv = None
+    cols = None
+    showv = None
     fields = None
     ov = CELL_OVERRIDES.get(raw)
     if ov:
@@ -986,13 +1550,32 @@ def build_record(raw, addr, tail, block_text, line_no, menu_group, green_names):
             fields = [dict(f) for f in ov["fields"]]
             enum = {}
             bits = []
+        if "enum_by_mode" in ov:
+            ebm = {str(k): dict(v) for k, v in ov["enum_by_mode"].items()}
+            enum = {}
+            bits = []
         if "access" in ov:
             access = ov["access"]
+        if "scale" in ov:
+            scale = ov["scale"]
+        if "unit" in ov:
+            unit = ov["unit"]
         fmtv = ov.get("format")
+        cols = ov.get("columns")
+        showv = ov.get("show_value")
         if "desc_extra" in ov:
             extra = ov["desc_extra"].strip()
             if extra:
                 desc = (desc + " " + extra).strip() if desc else extra
+
+    # Дополняем описание текстом документа ниже определения (кроме строк,
+    # уже разобранных как перечисление/биты, кода и заголовков секций).
+    # Для перечислимых/битовых параметров список уже показан отдельно — не
+    # дублируем его в описании.
+    if not ov and not enum and not bits and not fields:
+        notes = continuation_notes(block_text, desc)
+        if notes:
+            desc = (desc + " " + notes).strip()
 
     modes = derive_modes(raw, tail, block_text, green_names)
 
@@ -1010,6 +1593,8 @@ def build_record(raw, addr, tail, block_text, line_no, menu_group, green_names):
         name_ru = NAME_OVERRIDE[raw]
     if ov and ov.get("name"):
         name_ru = ov["name"]
+    if raw in RECOMMENDED_NAMES:
+        name_ru = RECOMMENDED_NAMES[raw]
 
     # «нет пригодного описания» — для отчёта и для производных имён
     usable_desc = bool(desc) and bool(CYR_RE.search(desc)) and not PLACEHOLDER_DESC_RE.match(desc)
@@ -1046,6 +1631,14 @@ def build_record(raw, addr, tail, block_text, line_no, menu_group, green_names):
     }
     if fmtv:
         rec["format"] = fmtv
+    if cols:
+        rec["columns"] = cols
+    if showv:
+        rec["show_value"] = True
+    if ov and "link" in ov:
+        rec["link"] = ov["link"]
+    if "enum_by_mode" in (ov or {}):
+        rec["enum_by_mode"] = {str(k): dict(v) for k, v in ov["enum_by_mode"].items()}
     if fields:
         rec["fields"] = fields
     if enum:
@@ -1074,6 +1667,8 @@ def pair_base(cell):
         return "low", "_SerialNum"
     if cell == "_SerialNum1":
         return "high", "_SerialNum"
+    if cell.endswith("_HH"):
+        return "hh", cell[:-3]
     m = LOW_SUF_RE.search(cell)
     if m:
         return "low", cell[: m.start()] + (m.group(2) or "")
@@ -1090,14 +1685,42 @@ def merge_pairs(merged):
     """
     lows = {}
     highs = {}
+    hhs = {}
     for key, rec in merged.items():
         kind, base = pair_base(rec["cell"])
         if kind == "low":
             lows.setdefault(base, []).append(key)
         elif kind == "high":
             highs.setdefault(base, []).append(key)
+        elif kind == "hh":
+            hhs.setdefault(base, []).append(key)
 
     report = []
+    # Тройки L/H/HH на соседних адресах — один 24-битный счётчик.
+    for base, skeys in hhs.items():
+        for skey in skeys:
+            s = merged.get(skey)
+            if s is None:
+                continue
+            h = next((merged[k] for k in highs.get(base, [])
+                      if merged.get(k) and merged[k]["addr"] + 1 == s["addr"]), None)
+            if h is None:
+                continue
+            l = next((merged[k] for k in lows.get(base, [])
+                      if merged.get(k) and merged[k]["addr"] + 1 == h["addr"]), None)
+            if l is None:
+                continue
+            l["width"] = 3
+            l["order"] = "lh"
+            for fld, default in (("scale", 1.0), ("offset", 0.0), ("unit", "")):
+                for src in (h, s):
+                    if l[fld] == default and src[fld] != default:
+                        l[fld] = src[fld]
+            del merged[(h["cell"], h["addr"])]
+            del merged[(s["cell"], s["addr"])]
+            report.append((h["cell"], l["cell"], l["addr"], "lh"))
+            report.append((s["cell"], l["cell"], l["addr"], "lh"))
+
     for base, hkeys in highs.items():
         for hkey in hkeys:
             hi = merged.get(hkey)
@@ -1140,8 +1763,8 @@ def self_check(params):
     for p in params:
         if not CYR_RE.search(p["name"]):
             problems.append("имя без кириллицы: %s (%r)" % (p["cell"], p["name"]))
-        if p["width"] == 2 and p.get("order") not in ("lh", "hl"):
-            problems.append("width=2 без order: %s" % p["cell"])
+        if p["width"] >= 2 and p.get("order") not in ("lh", "hl"):
+            problems.append("width>=2 без order: %s" % p["cell"])
         if p["key"] in seen:
             problems.append("дубликат key: %s" % p["key"])
         seen.add(p["key"])
@@ -1405,7 +2028,7 @@ def fill_units_ranges(params):
             p["min"] = round(float(m.group(1)), 3)
             p["max"] = round(float(m.group(2)), 3)
             continue
-        raw_max = 65535 if p["width"] == 2 else 255
+        raw_max = (1 << (8 * p["width"])) - 1
         p["min"] = round(offset, 3)
         p["max"] = round(offset + raw_max * scale, 3)
 
@@ -1483,14 +2106,22 @@ def main(argv=None):
             "max": rec["max"],
             "desc": rec["desc"],
         }
-        if rec["width"] == 2:
+        if rec["width"] >= 2:
             out["order"] = rec["order"]
         if rec.get("format"):
             out["format"] = rec["format"]
+        if rec.get("columns"):
+            out["columns"] = rec["columns"]
+        if rec.get("show_value"):
+            out["show_value"] = True
+        if rec.get("link"):
+            out["link"] = rec["link"]
         if rec.get("_fixed_range"):
             out["_fixed_range"] = True
         if "fields" in rec:
             out["fields"] = rec["fields"]
+        if "enum_by_mode" in rec:
+            out["enum_by_mode"] = rec["enum_by_mode"]
         if "enum" in rec:
             out["enum"] = rec["enum"]
         if "bits" in rec:
@@ -1499,9 +2130,16 @@ def main(argv=None):
 
     params.sort(key=lambda p: (p["addr"], p["cell"]))
     reorder_serial(params)
+    reorder_group_first(params)
+    reorder_move_after(params)
     fill_units_ranges(params)
     for p in params:
         p.pop("_fixed_range", None)
+    apply_links(params)
+    apply_special_formats(params)
+    # Ячейки текущего времени дублируют форму времени на главной — в разделах не
+    # показываем (управление временем остаётся на главной странице).
+    params[:] = [p for p in params if p["cell"] not in EXCLUDE_CELLS]
     self_check(params)
     catalog = {"source": SOURCE_NAME, "title": TITLE, "params": params}
 
@@ -1511,6 +2149,106 @@ def main(argv=None):
 
     print_summary(catalog, args.out, green_names, merged_pairs, derived)
     return 0
+
+
+def apply_special_formats(params):
+    """Форматы массивов пар L/H с маской старшего бита и 2-байтный _T_AccDisch."""
+    for p in params:
+        cell = p["cell"]
+        for pref, hmask, scale, unit in ARRAY_FORMATS:
+            if cell.startswith(pref) and p.get("width", 1) >= 2:
+                p["high_mask"] = hmask
+                p["scale"] = scale
+                p["unit"] = unit
+                p["min"] = 0
+                p["max"] = round(((1 << (8 * p["width"])) - 1) * scale, 3)
+        if cell == "_T_AccDisch":
+            p["width"] = 2
+            p["order"] = "lh"
+            p["scale"] = 1.0
+            p["unit"] = "сек"
+            p["min"] = 0
+            p["max"] = 65535
+
+
+def apply_links(params):
+    """Объединяет пары «основная + _dop» в один редактируемый параметр."""
+    by = {p["cell"]: p for p in params}
+    removed = set()
+    for main_cell, spec in LINK_PAIRS.items():
+        m = by.get(main_cell)
+        d = by.get(spec["dop"])
+        if m is None or d is None:
+            continue
+        m["scale"] = spec["scale"]
+        m["unit"] = spec["unit"]
+        m["min"] = spec["min"]
+        m["max"] = spec["max"]
+        m["link"] = {"addr": d["addr"], "kind": spec["kind"]}
+        removed.add(spec["dop"])
+    if removed:
+        params[:] = [p for p in params if p["cell"] not in removed]
+
+
+# Ячейки, не выводимые в разделах (дублируют элементы главной страницы).
+EXCLUDE_CELLS = {"_LCD_TimeCyr", "_TimeCyr_MINUT"}
+
+# Явный порядок ячеек в начале раздела (остальные — по адресу).
+GROUP_FIRST = {
+    "Заряд АКБ (настройки)": [
+        "_LCD_CAcc", "_LCD_UAccMin", "_LCD_UAccMinNetGen", "_LCD_UAccChStart",
+        "_LCD_UAccChBUF", "_LCD_UAccChMax", "_KorrTempAkb",
+        "_FrozenUAccAfterDisChage", "_UAccAfterDisChage",
+        "_LCD_UAccDizStart", "_LCD_NetMaxPow",
+        "_LCD_CIChargeStart", "_CIChargeAbsorb",
+    ],
+}
+
+
+def reorder_group_first(params):
+    for grp, order in GROUP_FIRST.items():
+        idx = [i for i, p in enumerate(params) if p["group"] == grp]
+        if not idx:
+            continue
+        items = [params[i] for i in idx]
+        rank = {c: n for n, c in enumerate(order)}
+        items.sort(key=lambda p: (rank.get(p["cell"], 10 ** 6), p["addr"], p["cell"]))
+        for i, pos in enumerate(idx):
+            params[pos] = items[i]
+
+
+# Перенос ячейки сразу после другой внутри её раздела.
+MOVE_AFTER = {
+    "ЖКИ и меню (настройки)": [("_LCD_RSBAUD", "_LCD_RS_Protocol")],
+}
+
+# Порядок реле в начале раздела «Реле и внешние устройства»: 1, 2, 3, II.
+GROUP_FIRST["Реле и внешние устройства"] = [
+    "_LCD_Rele1_Funk", "_LCD_Rele1_U_T_min", "_LCD_Rele1_U_T_maxInv", "_LCD_Rele1_GistInv",
+    "_LCD_Rele2_Funk", "_LCD_Rele2_U_T_min", "_LCD_Rele2_U_T_maxInv", "_LCD_Rele2_GistInv",
+    "_LCD_Rele3_Funk", "_LCD_Rele3_L1", "_LCD_Rele3_L2", "_LCD_Rele3_Gist",
+    "_LCD_ReleII_Funk", "_LCD_ReleII_L1", "_LCD_ReleII_L2", "_LCD_ReleII_Gist",
+]
+
+
+def reorder_move_after(params):
+    for grp, moves in MOVE_AFTER.items():
+        idx = [i for i, p in enumerate(params) if p["group"] == grp]
+        if not idx:
+            continue
+        items = [params[i] for i in idx]
+        for cell, after in moves:
+            it = next((x for x in items if x["cell"] == cell), None)
+            if it is None:
+                continue
+            items.remove(it)
+            ai = next((k for k, x in enumerate(items) if x["cell"] == after), None)
+            if ai is None:
+                items.append(it)
+            else:
+                items.insert(ai + 1, it)
+        for i, pos in enumerate(idx):
+            params[pos] = items[i]
 
 
 def reorder_serial(params):

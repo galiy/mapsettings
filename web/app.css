@@ -109,3 +109,32 @@ h1 { font-size:22px; margin:0 0 4px; }
   .ms-table th, .ms-table td { padding:5px 7px; }
   .ms-input { width:88px; }
 }
+
+/* --- Блоки настроек связи (чтение/запись) --- */
+[hidden] { display:none !important; }
+.ms-cfg-grid { display:flex; flex-wrap:wrap; gap:18px; margin-bottom:12px; }
+.ms-cfg-block { flex:1 1 360px; min-width:280px; border:1px solid #dbe4ee; border-radius:8px; padding:10px 12px; }
+.ms-cfg-block .ms-h2 { margin-top:0; }
+.ms-cfg-block .ms-field { display:flex; align-items:center; gap:8px; margin:6px 0; }
+.ms-cfg-block .ms-field input, .ms-cfg-block .ms-field select { flex:1 1 auto; min-width:0; }
+.ms-model { font-size:13px; color:#5a6572; margin-right:8px; }
+.ms-dialog { position:fixed; inset:0; background:rgba(0,0,0,.35); z-index:500; display:flex; align-items:center; justify-content:center; }
+.ms-dialog-box { background:#fff; border-radius:10px; box-shadow:0 10px 40px rgba(0,0,0,.3); max-width:520px; width:92%; padding:16px 18px; }
+.ms-dialog-title { font-weight:700; margin-bottom:8px; color:#c92a2a; }
+.ms-dialog.ok .ms-dialog-title { color:#2b8a3e; }
+.ms-dialog-text { font-size:14px; line-height:1.45; white-space:pre-wrap; }
+.ms-dialog-actions { margin-top:14px; text-align:right; }
+
+/* Пересчёт значения (напр. ток из долей ёмкости). */
+.ms-calc { margin-left:8px; color:#2b6cb0; font-weight:600; font-size:12px; white-space:nowrap; }
+
+/* Многоколоночные радиогруппы/поля (columns). */
+.ms-radios.ms-cols, .ms-fields.ms-cols { display:block; column-gap:16px; }
+.ms-radios.ms-cols .ms-radio, .ms-fields.ms-cols .ms-field-item { break-inside:avoid; display:block; }
+
+/* Переключатели доп. реле (Управляющие воздействия). */
+.ms-relays { display:flex; flex-wrap:wrap; gap:10px; margin-top:10px; }
+.ms-action-btn.relay-on { background:#f1aeb5; border-color:#e03131; color:#7a1010; }
+
+/* Показ числового кода справа внизу под радиокнопками (только чтение). */
+.ms-numval { text-align:right; color:#6b7785; font-size:12px; margin-top:4px; }

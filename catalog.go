@@ -56,13 +56,12 @@ const (
 	mapCellTimeMin   = 0x44B // _TimeCyr_MINUT = mm%10 — RAM
 	mapCellPutEEPROM = 0x403 // _put_eeprom — флаг записи в EEPROM
 	mapCellDevOpt    = 0x007 // _DevOpt: 3 — Титанатор, иначе Доминатор
+	mapCellUACC      = 0x006 // _UACC: код напряжения АКБ (число блоков, сдвиг)
 )
 
 // detectMapMode читает _DevOpt=0x007 и определяет модель МАП.
-func detectMapMode(ctx context.Context, addr string, unit byte) (string, error) {
-	c := &Client{Address: addr, Unit: unit}
-	defer c.Close()
-	cells, errs := readCellRanges(ctx, c, []uint16{mapCellDevOpt})
+func detectMapMode(ctx context.Context, r cellReader) (string, error) {
+	cells, errs := r.ReadCells(ctx, []uint16{mapCellDevOpt})
 	if len(errs) > 0 {
 		return "", fmt.Errorf("определение модели: %s", strings.Join(errs, "; "))
 	}
@@ -110,6 +109,24 @@ type mapParamSpec struct {
 	// Fields описывает разбиение байта на несколько именованных контролов
 	// (например, версия + флаг). Запись всё равно идёт одним числом.
 	Fields []mapField `json:"fields"`
+	// Link — связанная ячейка расширения `_dop`, читается/пишется вместе с
+	// основной по формуле Kind.
+	Link *mapLink `json:"link,omitempty"`
+	// HighMask маскирует все байты слова, кроме младшего (для пар L/H, где
+	// старший бит — признак ошибки, напр. BMS/MPPT).
+	HighMask byte `json:"high_mask,omitempty"`
+	// Columns — число колонок для радиогруппы/набора полей (>1).
+	Columns int `json:"columns,omitempty"`
+	// ShowValue — показывать числовой код под радиокнопками (только чтение).
+	ShowValue bool `json:"show_value,omitempty"`
+	// EnumByMode — перечисления, зависящие от модели МАП (mode -> варианты).
+	EnumByMode map[string]map[string]string `json:"enum_by_mode,omitempty"`
+}
+
+// mapLink — дополнительная ячейка, расширяющая основную.
+type mapLink struct {
+	Addr uint16 `json:"addr"`
+	Kind string `json:"kind"` // u16_hi | uacc10 | pow2
 }
 
 // mapField — именованное битовое поле внутри байта.
@@ -314,9 +331,14 @@ func normalizeMapMode(mode string) string {
 func neededAddrs(params []mapParamSpec) []uint16 {
 	set := map[uint16]struct{}{}
 	for _, p := range params {
-		set[p.Addr] = struct{}{}
-		if p.Width >= 2 {
-			set[p.Addr+1] = struct{}{}
+		for i := 0; i < p.Width; i++ {
+			set[p.Addr+uint16(i)] = struct{}{}
+		}
+		if p.Link != nil {
+			set[p.Link.Addr] = struct{}{}
+			if p.Link.Kind == "uacc10" || p.Link.Kind == "uacc" {
+				set[mapCellUACC] = struct{}{}
+			}
 		}
 	}
 	out := make([]uint16, 0, len(set))
@@ -380,6 +402,9 @@ func readCellRanges(ctx context.Context, c *Client, addrs []uint16) (map[uint16]
 
 // rawValue собирает сырое значение параметра из карты ячеек.
 func rawValue(p mapParamSpec, cells map[uint16]byte) (int, bool) {
+	if p.Link != nil {
+		return linkedRaw(p, cells)
+	}
 	b0, ok := cells[p.Addr]
 	if !ok {
 		return 0, false
@@ -387,14 +412,195 @@ func rawValue(p mapParamSpec, cells map[uint16]byte) (int, bool) {
 	if p.Width < 2 {
 		return int(b0), true
 	}
-	b1, ok := cells[p.Addr+1]
+	raw := 0
+	for i := 0; i < p.Width; i++ {
+		b, ok := cells[p.Addr+uint16(i)]
+		if !ok {
+			return 0, false
+		}
+		if p.HighMask != 0 {
+			// Младший байт не маскируем, остальные — да.
+			least := (p.Order == "lh" && i == 0) || (p.Order != "lh" && i == p.Width-1)
+			if !least {
+				b &= p.HighMask
+			}
+		}
+		if p.Order == "lh" {
+			raw |= int(b) << (8 * i)
+		} else {
+			raw = raw<<8 | int(b)
+		}
+	}
+	return raw, true
+}
+
+// linkedRaw объединяет основную ячейку и её `_dop`-расширение.
+func linkedRaw(p mapParamSpec, cells map[uint16]byte) (int, bool) {
+	main, ok := cells[p.Addr]
 	if !ok {
 		return 0, false
 	}
-	if p.Order == "lh" {
-		return int(b1)<<8 | int(b0), true
+	dop, ok := cells[p.Link.Addr]
+	if !ok {
+		return 0, false
 	}
-	return int(b0)<<8 | int(b1), true
+	switch p.Link.Kind {
+	case "uacc":
+		return int(main), true
+	case "u16_hi", "cacc":
+		return int(main) | int(dop)<<8, true
+	case "uacc10":
+		u, ok := cells[mapCellUACC]
+		if !ok {
+			return 0, false
+		}
+		return int(main)<<uint(u) | int(dop), true
+	case "pow2":
+		factor := 1
+		if dop == 1 {
+			factor = 2
+		}
+		return int(main) * factor, true
+	}
+	return 0, false
+}
+
+// linkedValue возвращает «сырое» (объединённое) и отображаемое значения
+// связанной пары. Для cacc отображаемое = (combined*25)>>UACC (документ).
+func linkedValue(p mapParamSpec, cells map[uint16]byte) (int, float64, bool) {
+	main, ok := cells[p.Addr]
+	if !ok {
+		return 0, 0, false
+	}
+	dop, ok := cells[p.Link.Addr]
+	if !ok {
+		return 0, 0, false
+	}
+	switch p.Link.Kind {
+	case "uacc":
+		u, ok := cells[mapCellUACC]
+		if !ok {
+			return 0, 0, false
+		}
+		if u > 7 {
+			u = 7
+		}
+		return int(main), float64(int(main)<<uint(u)) / 10, true
+	case "u16_hi":
+		c := int(main) | int(dop)<<8
+		return c, float64(c), true
+	case "cacc":
+		c := int(main) | int(dop)<<8
+		u, ok := cells[mapCellUACC]
+		if !ok {
+			return 0, 0, false
+		}
+		if u > 7 {
+			u = 7
+		}
+		return c, float64((c * 25) >> uint(u)), true
+	case "i16_hi7":
+		c := int(main) + int(dop&0x7F)<<8
+		v := float64(c) / 10
+		if dop&0x80 != 0 {
+			v = -v
+		}
+		return c, v, true
+	case "uacc10":
+		u, ok := cells[mapCellUACC]
+		if !ok {
+			return 0, 0, false
+		}
+		if u > 7 {
+			u = 7
+		}
+		c := int(main)<<uint(u) | int(dop)
+		return c, float64(c) / 10, true
+	case "pow2":
+		factor := 1
+		if dop == 1 {
+			factor = 2
+		}
+		c := int(main) * factor
+		return c, float64(c) * 100, true
+	}
+	return 0, 0, false
+}
+
+// linkedBytes раскладывает значение связанной пары в байты основной ячейки и
+// `_dop`. uacc — текущий код напряжения АКБ (_UACC) для kind=uacc10.
+func linkedBytes(p mapParamSpec, value float64, uacc int) (byte, byte, error) {
+	if p.Scale == 0 {
+		return 0, 0, fmt.Errorf("нулевой масштаб")
+	}
+	logical := int(math.Round((value - p.Offset) / p.Scale))
+	if logical < 0 && p.Link.Kind != "i16_hi7" {
+		return 0, 0, fmt.Errorf("значение %g вне допустимого", value)
+	}
+	switch p.Link.Kind {
+	case "u16_hi":
+		if logical > 65535 {
+			return 0, 0, fmt.Errorf("значение %g больше слова", value)
+		}
+		return byte(logical), byte(logical >> 8), nil
+	case "cacc":
+		// Обратная формула: combined = Ah * 2^UACC / 25; main+dop<<8.
+		if uacc < 0 || uacc > 7 {
+			return 0, 0, fmt.Errorf("некорректный код напряжения АКБ: %d", uacc)
+		}
+		combined := int(math.Round((value - p.Offset) * float64(int(1)<<uint(uacc)) / 25.0))
+		if combined < 0 || combined > 65535 {
+			return 0, 0, fmt.Errorf("значение %g не представимо", value)
+		}
+		main := combined & 0xFF
+		dop := (combined >> 8) & 0xFF
+		if main == 255 {
+			// 255 закрывает пункт меню — уменьшаем до 254.
+			main = 254
+		}
+		return byte(main), byte(dop), nil
+	case "uacc":
+		// Однобайтовое значение со сдвигом по UACC: U(В)=(raw<<UACC)/10.
+		if uacc < 0 || uacc > 7 {
+			return 0, 0, fmt.Errorf("некорректный код напряжения АКБ: %d", uacc)
+		}
+		raw := int(math.Round(value*10)) >> uint(uacc)
+		if raw < 0 || raw > 255 {
+			return 0, 0, fmt.Errorf("значение %g не представимо", value)
+		}
+		return byte(raw), byte(raw), nil
+	case "i16_hi7":
+		// Фазный ток: (L + (H&0x7F)*256)/10; бит7 H — знак (заряд).
+		logical = int(math.Round(math.Abs(value) * 10))
+		if logical > 0x7FFF {
+			return 0, 0, fmt.Errorf("значение %g не представимо", value)
+		}
+		main := byte(logical & 0xFF)
+		dop := byte((logical >> 8) & 0x7F)
+		if value < 0 {
+			dop |= 0x80
+		}
+		return main, dop, nil
+	case "uacc10":
+		if uacc < 0 || uacc > 7 {
+			return 0, 0, fmt.Errorf("некорректный код напряжения АКБ: %d", uacc)
+		}
+		main := logical >> uint(uacc)
+		dop := logical - (main << uint(uacc))
+		if main > 255 || dop > 255 {
+			return 0, 0, fmt.Errorf("значение %g не представимо (main=%d dop=%d)", value, main, dop)
+		}
+		return byte(main), byte(dop), nil
+	case "pow2":
+		if logical <= 255 {
+			return byte(logical), 0, nil
+		}
+		if logical%2 == 0 && logical/2 <= 255 {
+			return byte(logical / 2), 1, nil
+		}
+		return 0, 0, fmt.Errorf("мощность %g не представима", value)
+	}
+	return 0, 0, fmt.Errorf("неизвестный тип связи %q", p.Link.Kind)
 }
 
 // displayValue переводит сырое значение в отображаемое (scale/offset).
@@ -406,6 +612,9 @@ func displayValue(p mapParamSpec, raw int) float64 {
 func splitRaw(p mapParamSpec, value float64) ([]byte, error) {
 	if p.Scale == 0 {
 		return nil, fmt.Errorf("нулевой масштаб")
+	}
+	if p.Width > 2 {
+		return nil, fmt.Errorf("запись %d-байтной ячейки не поддержана", p.Width)
 	}
 	raw := int(math.Round((value - p.Offset) / p.Scale))
 	if raw < 0 {
@@ -456,29 +665,32 @@ type mapOption struct {
 
 // mapSettingView — параметр в ответе API.
 type mapSettingView struct {
-	Key      string      `json:"key"`
-	Cell     string      `json:"cell"`
-	Addr     string      `json:"addr"`
-	Name     string      `json:"name"`
-	Unit     string      `json:"unit"`
-	Kind     string      `json:"kind"`
-	Access   string      `json:"access"`
-	Writable bool        `json:"writable"`
-	Danger   bool        `json:"danger,omitempty"`
-	Format   string      `json:"format,omitempty"`
-	Fields   []mapField  `json:"fields,omitempty"`
-	Value    *float64    `json:"value"`
-	Raw      *int        `json:"raw"`
-	Text     string      `json:"text,omitempty"`
-	Min      *float64    `json:"min,omitempty"`
-	Max      *float64    `json:"max,omitempty"`
-	Scale    float64     `json:"scale"`
-	Offset   float64     `json:"offset"`
-	Desc     string      `json:"desc,omitempty"`
-	Help     string      `json:"help,omitempty"`
-	Error    string      `json:"error,omitempty"`
-	Options  []mapOption `json:"options,omitempty"`
-	Bits     []mapBit    `json:"bits,omitempty"`
+	Key       string          `json:"key"`
+	Cell      string          `json:"cell"`
+	Addr      string          `json:"addr"`
+	Name      string          `json:"name"`
+	Unit      string          `json:"unit"`
+	Kind      string          `json:"kind"`
+	Access    string          `json:"access"`
+	Writable  bool            `json:"writable"`
+	Danger    bool            `json:"danger,omitempty"`
+	Format    string          `json:"format,omitempty"`
+	Fields    []mapField      `json:"fields,omitempty"`
+	Columns   int             `json:"columns,omitempty"`
+	ShowValue bool            `json:"show_value,omitempty"`
+	Flag      *mapSettingView `json:"flag,omitempty"`
+	Value     *float64        `json:"value"`
+	Raw       *int            `json:"raw"`
+	Text      string          `json:"text,omitempty"`
+	Min       *float64        `json:"min,omitempty"`
+	Max       *float64        `json:"max,omitempty"`
+	Scale     float64         `json:"scale"`
+	Offset    float64         `json:"offset"`
+	Desc      string          `json:"desc,omitempty"`
+	Help      string          `json:"help,omitempty"`
+	Error     string          `json:"error,omitempty"`
+	Options   []mapOption     `json:"options,omitempty"`
+	Bits      []mapBit        `json:"bits,omitempty"`
 }
 
 // dangerKeys — ячейки (по ключу), изменение которых опасно для оборудования.
@@ -487,24 +699,20 @@ type mapSettingView struct {
 var dangerKeys = map[string]bool{
 	"pow": true, "uacc": true, "devopt": true,
 	"fuacc_korr": true, "pow_korr": true, "i_chage_korr": true,
-	"lcd_acctype": true, "lcd_cacc": true,
-	"lcd_cichargestart": true, "lcd_cichargeend": true, "cichargeabsorb": true,
+	"lcd_cichargeend":   true,
 	"tft_cichargesoc95": true,
-	"lcd_uaccchmax":     true, "lcd_uaccchbuf": true, "lcd_uaccchstart": true,
-	"lcd_uaccmin": true, "lcd_uaccminnetgen": true,
-	"del_uaccchbuf_24h": true, "deluchargeend": true,
+	"deluchargeend":     true,
 	"tft_soc_discharge": true, "tft_soc_startcharge": true, "tft_soc_dizstart": true,
-	"powaccnom": true, "lcd_netmaxpow": true, "lcd_dizelmaxpow": true,
-	"pnet_prodag_max":  true,
+	"powaccnom": true, "lcd_dizelmaxpow": true,
 	"lcd_umap220_need": true, "lcd_netalg": true,
 	"lcd_unetup": true, "lcd_unetdown": true, "lcd_unet2up": true, "lcd_unet2down": true,
 	"lcd_map_ifaze": true, "lcd_map_sync": true,
-	"lcd_slavemapnum": true, "lcd_mpptnum": true, "bms_num": true,
+	"lcd_slavemapnum": true, "bms_num": true,
 	"no3fazemotor": true, "mask_dev_on": true, "avr_on": true,
 	"grid_52hz": true, "syncdiz_plat": true,
 	"lcd_netupload": true, "lcd_netupeco": true, "lcd_net2": true,
 	"lcd_netdizel": true, "netupeco_net2_off": true, "lcd_sensload": true,
-	"frozenuaccafterdischage": true,
+	"frozenuaccafterdischage": true, "uaccafterdischage": true,
 	// Версии/служебные ячейки: запись может нарушить работу.
 	"ram_end_l": true, "verplatpic": true, "verplatpowdop": true,
 	"vertest": true, "verpow": true, "device": true,
@@ -514,12 +722,21 @@ var dangerKeys = map[string]bool{
 
 // paramOptions строит список вариантов для перечислимого параметра: значение —
 // в отображаемых единицах (с учётом scale/offset), подпись — из документа.
-func paramOptions(p mapParamSpec) []mapOption {
-	if len(p.Enum) == 0 {
+// paramEnum возвращает перечисление параметра с учётом модели МАП.
+func paramEnum(p mapParamSpec, mode string) map[string]string {
+	if e, ok := p.EnumByMode[mode]; ok && len(e) > 0 {
+		return e
+	}
+	return p.Enum
+}
+
+func paramOptions(p mapParamSpec, mode string) []mapOption {
+	enum := paramEnum(p, mode)
+	if len(enum) == 0 {
 		return nil
 	}
-	keys := make([]int, 0, len(p.Enum))
-	for k := range p.Enum {
+	keys := make([]int, 0, len(enum))
+	for k := range enum {
 		if n, err := strconv.Atoi(k); err == nil {
 			keys = append(keys, n)
 		}
@@ -527,9 +744,10 @@ func paramOptions(p mapParamSpec) []mapOption {
 	sort.Ints(keys)
 	opts := make([]mapOption, 0, len(keys))
 	for _, k := range keys {
+		text := enum[strconv.Itoa(k)]
 		opts = append(opts, mapOption{
 			Value: mapRound3(float64(k)*p.Scale + p.Offset),
-			Label: p.Enum[strconv.Itoa(k)],
+			Label: strconv.Itoa(k) + " — " + text,
 		})
 	}
 	return opts
@@ -538,7 +756,7 @@ func paramOptions(p mapParamSpec) []mapOption {
 // paramHelp собирает текст подсказки из документации: описание ячейки, затем
 // (при наличии) единица/формула, расшифровки значений (enum) и битовые поля.
 // Имя параметра в подсказку не включается — оно и так в колонке «Параметр».
-func paramHelp(p mapParamSpec) string {
+func paramHelp(p mapParamSpec, mode string) string {
 	var b strings.Builder
 	if p.Desc != "" {
 		b.WriteString(p.Desc)
@@ -552,9 +770,9 @@ func paramHelp(p mapParamSpec) string {
 			fmt.Fprintf(&b, "; отображение = значение×%g%+g", p.Scale, p.Offset)
 		}
 	}
-	if len(p.Enum) > 0 {
-		keys := make([]int, 0, len(p.Enum))
-		for k := range p.Enum {
+	if enum := paramEnum(p, mode); len(enum) > 0 {
+		keys := make([]int, 0, len(enum))
+		for k := range enum {
 			if n, err := strconv.Atoi(k); err == nil {
 				keys = append(keys, n)
 			}
@@ -565,7 +783,7 @@ func paramHelp(p mapParamSpec) string {
 		}
 		b.WriteString("Значения:")
 		for _, k := range keys {
-			fmt.Fprintf(&b, "\n• %d — %s", k, p.Enum[strconv.Itoa(k)])
+			fmt.Fprintf(&b, "\n• %d — %s", k, enum[strconv.Itoa(k)])
 		}
 	}
 	if len(p.Bits) > 0 {
@@ -588,10 +806,11 @@ type mapSettingsGroup struct {
 }
 
 type mapSettingsActionView struct {
-	Key     string `json:"key"`
-	Name    string `json:"name"`
-	Desc    string `json:"desc"`
-	Confirm bool   `json:"confirm"`
+	Key          string `json:"key"`
+	Name         string `json:"name"`
+	Desc         string `json:"desc"`
+	Confirm      bool   `json:"confirm"`
+	ConfirmCount int    `json:"confirmCount,omitempty"`
 }
 
 // mapSettingsSnapshot — полный ответ GET /api/map-settings.
@@ -608,9 +827,9 @@ type mapSettingsSnapshot struct {
 }
 
 // buildSnapshot формирует снимок: настройки (rw) и мониторинг (ro) по группам.
-func buildSnapshot(mode, ip string, port int, unit byte, params []mapParamSpec, cells map[uint16]byte, readErrs []string) *mapSettingsSnapshot {
+func buildSnapshot(mode string, params []mapParamSpec, cells map[uint16]byte, readErrs []string) *mapSettingsSnapshot {
 	snap := &mapSettingsSnapshot{
-		Mode: mode, IP: ip, Port: port, Unit: int(unit),
+		Mode:    mode,
 		ReadAt:  time.Now().Format(time.RFC3339),
 		Actions: mapSettingsActionsView(),
 		Errors:  readErrs,
@@ -628,11 +847,18 @@ func buildSnapshot(mode, ip string, port int, unit byte, params []mapParamSpec, 
 	}
 	setIdx := map[string]int{}
 	monIdx := map[string]int{}
+	flags := map[string]mapSettingView{}
 	for _, p := range params {
 		if !paramInMode(p, mode) {
 			continue
 		}
-		v := settingView(p, cells)
+		v := settingView(p, cells, mode)
+		// Ячейки-флаги, «прикреплённые» к другому параметру, не выводятся
+		// отдельной строкой — их контрол показывается в строке цели.
+		if _, isFlag := paramFlags[p.Key]; isFlag {
+			flags[p.Key] = v
+			continue
+		}
 		if p.Access == "rw" {
 			i := add(&snap.Settings, setIdx, p.Group)
 			snap.Settings[i].Params = append(snap.Settings[i].Params, v)
@@ -641,43 +867,104 @@ func buildSnapshot(mode, ip string, port int, unit byte, params []mapParamSpec, 
 			snap.Monitor[i].Params = append(snap.Monitor[i].Params, v)
 		}
 	}
+	// Прикрепляем виды флагов к целевым параметрам.
+	for flagKey, targetKey := range paramFlags {
+		fv, ok := flags[flagKey]
+		if !ok {
+			continue
+		}
+		attach := func(groups []mapSettingsGroup) bool {
+			for i := range groups {
+				for j := range groups[i].Params {
+					if groups[i].Params[j].Key == targetKey {
+						f := fv
+						groups[i].Params[j].Flag = &f
+						return true
+					}
+				}
+			}
+			return false
+		}
+		if !attach(snap.Settings) {
+			attach(snap.Monitor)
+		}
+	}
 	return snap
 }
 
+// noVerifyKeys — командные (write-only) ячейки: записанное значение в них не
+// хранится, поэтому чтение-обратно не показательно и верификацию пропускаем
+// (успех определяется ответом транспорта).
+var noVerifyKeys = map[string]bool{
+	"status_reledop": true,
+	"put_eeprom":     true,
+}
+
+// paramFlags — ячейки-флаги, отображаемые в строке другого параметра
+// (ключ флага → ключ целевого параметра). Сейчас пусто: флаг
+// `_FrozenUAccAfterDisChage` выводится отдельной строкой над `_UAccAfterDisChage`.
+var paramFlags = map[string]string{}
+
 // settingView собирает представление одного параметра по прочитанным ячейкам.
-func settingView(p mapParamSpec, cells map[uint16]byte) mapSettingView {
+func settingView(p mapParamSpec, cells map[uint16]byte, mode string) mapSettingView {
 	v := mapSettingView{
 		Key: p.Key, Cell: p.Cell, Addr: fmt.Sprintf("0x%03X", p.Addr),
 		Name: p.Name, Unit: p.Unit, Kind: p.Kind, Access: p.Access,
 		Writable: p.Access == "rw", Danger: dangerKeys[p.Key],
-		Format: p.Format, Fields: p.Fields,
+		Format: p.Format, Fields: p.Fields, Columns: p.Columns, ShowValue: p.ShowValue,
 		Min: p.Min, Max: p.Max, Desc: p.Desc,
 		Scale: p.Scale, Offset: p.Offset,
-		Help: paramHelp(p),
+		Help: paramHelp(p, mode),
 	}
-	raw, ok := rawValue(p, cells)
-	if !ok {
-		v.Error = "нет данных"
+	if p.Link != nil {
+		// Связанная пара «основная + _dop»: значение считается по формуле.
+		if raw, val, ok := linkedValue(p, cells); ok {
+			r := raw
+			v.Raw = &r
+			v.Value = &val
+		} else {
+			v.Error = "нет данных"
+		}
 	} else {
-		r := raw
-		val := displayValue(p, raw)
-		v.Raw = &r
-		v.Value = &val
-		v.Text = enumText(p, raw)
+		raw, ok := rawValue(p, cells)
+		if !ok {
+			v.Error = "нет данных"
+		} else {
+			r := raw
+			val := displayValue(p, raw)
+			if p.Format == "freq" {
+				// Частота: F(Гц)=6250/ThFMAP (ПО >= 17.0).
+				val = 0
+				if raw > 0 {
+					val = math.Round(625000.0/float64(raw)) / 100
+				}
+			}
+			if p.Format == "days12" {
+				// Дни: значение/12; код 255 (не задано) показываем как есть.
+				if raw == 255 {
+					val = 255
+				} else {
+					val = math.Round(float64(raw)/12*100) / 100
+				}
+			}
+			v.Raw = &r
+			v.Value = &val
+			v.Text = enumText(p, raw)
+		}
 	}
-	if p.Access == "rw" {
-		if opts := paramOptions(p); len(opts) > 0 {
-			v.Options = opts
-		}
-		if len(p.Bits) > 0 {
-			v.Bits = p.Bits
-		}
+	// Перечисления и биты отдаём и для ro-параметров: клиент показывает их
+	// как неактивные (read-only) контролы, чтобы смысл значения был виден.
+	if opts := paramOptions(p, mode); len(opts) > 0 {
+		v.Options = opts
+	}
+	if len(p.Bits) > 0 {
+		v.Bits = p.Bits
 	}
 	return v
 }
 
 // readMapSettingView перечитывает один параметр по ключу.
-func readMapSettingView(ctx context.Context, target mapSettingsTarget, key string) (*mapSettingView, error) {
+func readMapSettingView(ctx context.Context, r cellReader, mode, key string) (*mapSettingView, error) {
 	cat, err := loadMapSettingsCatalog()
 	if err != nil {
 		return nil, err
@@ -685,7 +972,7 @@ func readMapSettingView(ctx context.Context, target mapSettingsTarget, key strin
 	var spec mapParamSpec
 	found := false
 	for _, p := range cat.Params {
-		if p.Key == key && paramInMode(p, target.mode) {
+		if p.Key == key && paramInMode(p, mode) {
 			spec, found = p, true
 			break
 		}
@@ -693,10 +980,8 @@ func readMapSettingView(ctx context.Context, target mapSettingsTarget, key strin
 	if !found {
 		return nil, fmt.Errorf("неизвестный параметр %q", key)
 	}
-	c := &Client{Address: target.address(), Unit: target.unit}
-	defer c.Close()
-	cells, errs := readCellRanges(ctx, c, neededAddrs([]mapParamSpec{spec}))
-	v := settingView(spec, cells)
+	cells, errs := r.ReadCells(ctx, neededAddrs([]mapParamSpec{spec}))
+	v := settingView(spec, cells, mode)
 	if v.Error == "нет данных" && len(errs) > 0 {
 		v.Error = strings.Join(errs, "; ")
 	}
@@ -704,22 +989,19 @@ func readMapSettingView(ctx context.Context, target mapSettingsTarget, key strin
 }
 
 // readMapSettingsSnapshot читает все параметры (для режима) с МАП.
-func readMapSettingsSnapshot(ctx context.Context, target mapSettingsTarget) (*mapSettingsSnapshot, error) {
+func readMapSettingsSnapshot(ctx context.Context, r cellReader, mode string) (*mapSettingsSnapshot, error) {
 	cat, err := loadMapSettingsCatalog()
 	if err != nil {
 		return nil, err
 	}
 	params := make([]mapParamSpec, 0, len(cat.Params))
 	for _, p := range cat.Params {
-		if paramInMode(p, target.mode) {
+		if paramInMode(p, mode) {
 			params = append(params, p)
 		}
 	}
-	c := &Client{Address: target.address(), Unit: target.unit}
-	defer c.Close()
-	addrs := neededAddrs(params)
-	cells, errs := readCellRanges(ctx, c, addrs)
-	return buildSnapshot(target.mode, target.ip, target.port, target.unit, params, cells, errs), nil
+	cells, errs := r.ReadCells(ctx, neededAddrs(params))
+	return buildSnapshot(mode, params, cells, errs), nil
 }
 
 // --- Запись ---
@@ -756,22 +1038,37 @@ func validateMapTarget(mode, ip string, port int) (mapSettingsTarget, error) {
 
 // applyMapSettings применяет изменения (только изменённые параметры) со служебным
 // обрамлением и верификацией. changes: key → новое отображаемое значение.
-func applyMapSettings(ctx context.Context, target mapSettingsTarget, changes map[string]float64, allowDanger bool) (map[string]string, error) {
+func applyMapSettings(ctx context.Context, conn cellConn, mode string, changes map[string]float64, allowDanger bool) (map[string]string, error) {
 	cat, err := loadMapSettingsCatalog()
 	if err != nil {
 		return nil, err
 	}
 	byKey := make(map[string]mapParamSpec, len(cat.Params))
 	for _, p := range cat.Params {
-		if paramInMode(p, target.mode) {
+		if paramInMode(p, mode) {
 			byKey[p.Key] = p
 		}
 	}
-	type write struct {
-		addr uint16
-		data []byte
+	// Для связанных пар uacc10 нужен текущий код напряжения АКБ (_UACC).
+	needUacc := false
+	for key := range changes {
+		if p, ok := byKey[key]; ok && p.Link != nil && (p.Link.Kind == "uacc10" || p.Link.Kind == "uacc") {
+			needUacc = true
+			break
+		}
 	}
-	var writes []write
+	uacc := 0
+	if needUacc {
+		cells, errs := conn.ReadCells(ctx, []uint16{mapCellUACC})
+		u, ok := cells[mapCellUACC]
+		if !ok || len(errs) > 0 {
+			return nil, fmt.Errorf("чтение _UACC для связанных ячеек: %s", strings.Join(errs, "; "))
+		}
+		uacc = int(u)
+	}
+	var writes []cellWrite
+	// Командные (write-only) ячейки не читаются обратно для верификации.
+	skipVerify := map[uint16]bool{}
 	results := map[string]string{}
 	for key, val := range changes {
 		p, ok := byKey[key]
@@ -803,49 +1100,57 @@ func applyMapSettings(ctx context.Context, target mapSettingsTarget, changes map
 			results[key] = fmt.Sprintf("выше максимума %g", *p.Max)
 			continue
 		}
+		if noVerifyKeys[key] {
+			skipVerify[p.Addr] = true
+		}
+		if p.Link != nil {
+			main, dop, lerr := linkedBytes(p, val, uacc)
+			if lerr != nil {
+				results[key] = lerr.Error()
+				continue
+			}
+			writes = append(writes, cellWrite{p.Addr, main})
+			if p.Link.Addr != p.Addr {
+				writes = append(writes, cellWrite{p.Link.Addr, dop})
+			}
+			if noVerifyKeys[key] {
+				skipVerify[p.Link.Addr] = true
+			}
+			continue
+		}
 		data, err := splitRaw(p, val)
 		if err != nil {
 			results[key] = err.Error()
 			continue
 		}
 		for i, b := range data {
-			writes = append(writes, write{addr: p.Addr + uint16(i), data: []byte{b}})
+			writes = append(writes, cellWrite{p.Addr + uint16(i), b})
 		}
 	}
 	if len(writes) == 0 {
 		return results, nil
 	}
-
-	c := &Client{Address: target.address(), Unit: target.unit}
-	defer c.Close()
-	// 1) разрешение записи (как mapd: команда 0x03).
-	if err := c.WriteCommand(ctx, ComMAPEEPromWR); err != nil {
-		return nil, fmt.Errorf("разрешение записи (ComMAP_EEPromWR): %w", err)
+	// Запись целиком через транспорт (он сам делает служебное обрамление,
+	// а для Малины — отправляет mapd без стартовой/завершающей команды).
+	if err := conn.WriteBytes(ctx, writes); err != nil {
+		return results, err
 	}
-	// 2) запись ячеек.
-	for _, w := range writes {
-		if err := c.WriteCell(ctx, w.addr, w.data[0]); err != nil {
-			return results, fmt.Errorf("запись 0x%03X: %w", w.addr, err)
-		}
-	}
-	// 3) фиксация EEPROM (как mapd: команда 0x07).
-	if err := c.WriteCommand(ctx, ComMAPCallLoadEEProm); err != nil {
-		return results, fmt.Errorf("фиксация (ComMAP_Call_load_EEProm): %w", err)
-	}
-	// 4) чтение-обратно затронутых ячеек.
+	// Чтение-обратно затронутых ячеек.
 	addrs := make([]uint16, 0, len(writes))
 	for _, w := range writes {
-		addrs = append(addrs, w.addr)
+		addrs = append(addrs, w.Addr)
 	}
-	cells, _ := readCellRanges(ctx, c, uniqueU16(addrs))
+	cells, _ := conn.ReadCells(ctx, uniqueU16(addrs))
 	for _, w := range writes {
-		got, ok := cells[w.addr]
+		if skipVerify[w.Addr] {
+			continue
+		}
+		got, ok := cells[w.Addr]
 		if !ok {
 			continue
 		}
-		if got != w.data[0] {
-			key := fmt.Sprintf("0x%03X", w.addr)
-			results[key] = fmt.Sprintf("верификация: получено %d, ждали %d", got, w.data[0])
+		if got != w.Value {
+			results[fmt.Sprintf("0x%03X", w.Addr)] = fmt.Sprintf("верификация: получено %d, ждали %d", got, w.Value)
 		}
 	}
 	return results, nil
@@ -868,11 +1173,13 @@ func uniqueU16(in []uint16) []uint16 {
 // --- Управляющие воздействия ---
 
 type mapAction struct {
-	Key     string
-	Name    string
-	Desc    string
-	Cmd     byte
-	Confirm bool
+	Key          string
+	Name         string
+	Desc         string
+	Cmd          byte
+	Confirm      bool
+	ConfirmCount int // сколько раз переспросить (0/1 — один раз)
+	RelayNum     int // 1..4 — переключатель реле (не обычная команда)
 }
 
 // mapSettingsActions — команды МАП (запись по адресу 0). Не являются изменением
@@ -885,40 +1192,104 @@ var mapSettingsActions = []mapAction{
 	{Key: "stat_reset", Name: "Сброс статистики", Desc: "Сбросить накопленную статистику (ComMAP_StatReset)", Cmd: ComMAPStatReset, Confirm: true},
 	{Key: "disch_off", Name: "Запретить разряд", Desc: "Выключение генерации по полному разряду (ComMAP_DischOff)", Cmd: ComMAPDischOff, Confirm: true},
 	{Key: "load_eeprom", Name: "Загрузить настройки из EEPROM", Desc: "Инициализация данных из EEPROM (ComMAP_Call_load_EEProm)", Cmd: ComMAPCallLoadEEProm, Confirm: false},
-	{Key: "reset", Name: "Сброс контроллера", Desc: "Полная перезагрузка МАП — крайняя мера (ComMAP_Reset)", Cmd: ComMAPReset, Confirm: true},
+	{Key: "reset", Name: "Сброс контроллера", Desc: "Полная перезагрузка МАП — крайняя мера (ComMAP_Reset)", Cmd: ComMAPReset, Confirm: true, ConfirmCount: 3},
+	// Переключатели доп. реле (одна кнопка вкл/выкл по состоянию).
+	{Key: "relay1", Name: "Реле 1", Desc: "Включить/выключить доп. реле 1", Confirm: true, RelayNum: 1},
+	{Key: "relay2", Name: "Реле 2", Desc: "Включить/выключить доп. реле 2", Confirm: true, RelayNum: 2},
+	{Key: "relay3", Name: "Реле 3", Desc: "Включить/выключить доп. реле 3 (Титанатор)", Confirm: true, RelayNum: 3},
+	{Key: "relay4", Name: "Реле 4", Desc: "Включить/выключить доп. реле 4 (Титанатор)", Confirm: true, RelayNum: 4},
+}
+
+// relayCountForMode — число доп. реле для модели.
+func relayCountForMode(mode string) int {
+	if normalizeMapMode(mode) == mapModeTitanator {
+		return 4
+	}
+	return 2
+}
+
+// readRelayStates читает состояние доп. реле (1 — включено, 0 — выключено).
+// Доступно при связи с Малиной (read_json.php).
+func readRelayStates(ctx context.Context, conn cellConn, mode string) ([]int, error) {
+	mc, ok := conn.(*malinaConn)
+	if !ok {
+		return nil, fmt.Errorf("состояние реле доступно только при связи через Малину")
+	}
+	b, err := mc.get(ctx, "/read_json.php?device=map")
+	if err != nil {
+		return nil, err
+	}
+	var m map[string]any
+	if err := json.Unmarshal(b, &m); err != nil {
+		return nil, fmt.Errorf("разбор read_json: %w", err)
+	}
+	n := relayCountForMode(mode)
+	states := make([]int, n)
+	for i := 0; i < n; i++ {
+		key := fmt.Sprintf("_Relay%d", i+1)
+		if v, ok := m[key]; ok {
+			if f, ok := toInt(v); ok {
+				if f != 0 {
+					states[i] = 1
+				}
+			}
+		}
+	}
+	return states, nil
 }
 
 func mapSettingsActionsView() []mapSettingsActionView {
 	out := make([]mapSettingsActionView, 0, len(mapSettingsActions))
 	for _, a := range mapSettingsActions {
-		out = append(out, mapSettingsActionView{Key: a.Key, Name: a.Name, Desc: a.Desc, Confirm: a.Confirm})
+		if a.RelayNum > 0 {
+			continue // реле выводятся отдельными переключателями
+		}
+		out = append(out, mapSettingsActionView{Key: a.Key, Name: a.Name, Desc: a.Desc, Confirm: a.Confirm, ConfirmCount: a.ConfirmCount})
 	}
 	return out
 }
 
 // runMapSettingsAction выполняет команду по ключу.
-func runMapSettingsAction(ctx context.Context, target mapSettingsTarget, key string) error {
+func runMapSettingsAction(ctx context.Context, conn cellConn, mode, key string) error {
 	var cmd byte
 	found := false
+	relay := 0
 	for _, a := range mapSettingsActions {
 		if a.Key == key {
-			cmd, found = a.Cmd, true
+			cmd, found, relay = a.Cmd, true, a.RelayNum
 			break
 		}
 	}
 	if !found {
 		return fmt.Errorf("неизвестное действие %q", key)
 	}
-	c := &Client{Address: target.address(), Unit: target.unit}
-	defer c.Close()
+	// Переключатель доп. реле: читаем состояния, инвертируем нужный бит в
+	// _Status_RELEdop (0x586), сохраняя остальные, и пишем одним значением.
+	if relay > 0 {
+		if relay > relayCountForMode(mode) {
+			return fmt.Errorf("реле %d недоступно для этой модели", relay)
+		}
+		states, err := readRelayStates(ctx, conn, mode)
+		if err != nil {
+			return err
+		}
+		var b byte
+		for i, s := range states {
+			if s != 0 {
+				b |= 1 << uint(i)
+			}
+		}
+		b ^= 1 << uint(relay-1)
+		return conn.WriteBytes(ctx, []cellWrite{{0x586, b}})
+	}
 	// Сервисные команды, меняющие EEPROM (сброс статистики/загрузка), обрамляем
 	// разрешением записи — как и обычную запись.
 	if key == "stat_reset" || key == "load_eeprom" {
-		if err := c.WriteCommand(ctx, ComMAPEEPromWR); err != nil {
+		if err := conn.WriteCommand(ctx, ComMAPEEPromWR); err != nil {
 			return err
 		}
 	}
-	return c.WriteCommand(ctx, cmd)
+	return conn.WriteCommand(ctx, cmd)
 }
 
 // --- Текущее время (отдельная форма) ---
@@ -932,10 +1303,8 @@ type mapTimeState struct {
 }
 
 // readMapTime читает текущее время МАП из ячеек _LCD_TimeCyr/_TimeCyr_MINUT.
-func readMapTime(ctx context.Context, target mapSettingsTarget) (*mapTimeState, error) {
-	c := &Client{Address: target.address(), Unit: target.unit}
-	defer c.Close()
-	cells, errs := readCellRanges(ctx, c, []uint16{mapCellTimeCyr, mapCellTimeMin})
+func readMapTime(ctx context.Context, r cellReader) (*mapTimeState, error) {
+	cells, errs := r.ReadCells(ctx, []uint16{mapCellTimeCyr, mapCellTimeMin})
 	if len(errs) > 0 {
 		return nil, fmt.Errorf("%s", strings.Join(errs, "; "))
 	}
@@ -953,27 +1322,16 @@ func readMapTime(ctx context.Context, target mapSettingsTarget) (*mapTimeState, 
 }
 
 // writeMapTime записывает время МАП (часы + десятки/единицы минут) с обрамлением.
-func writeMapTime(ctx context.Context, target mapSettingsTarget, hour, minute int) error {
+func writeMapTime(ctx context.Context, conn cellConn, hour, minute int) error {
 	if hour < 0 || hour > 23 || minute < 0 || minute > 59 {
 		return fmt.Errorf("некорректное время %02d:%02d", hour, minute)
 	}
 	c1 := byte((hour << 3) | (minute / 10))
 	c2 := byte(minute % 10)
-	c := &Client{Address: target.address(), Unit: target.unit}
-	defer c.Close()
-	if err := c.WriteCommand(ctx, ComMAPEEPromWR); err != nil {
-		return fmt.Errorf("разрешение записи: %w", err)
+	if err := conn.WriteBytes(ctx, []cellWrite{{mapCellTimeCyr, c1}, {mapCellTimeMin, c2}}); err != nil {
+		return err
 	}
-	if err := c.WriteCell(ctx, mapCellTimeCyr, c1); err != nil {
-		return fmt.Errorf("запись 0x%03X: %w", mapCellTimeCyr, err)
-	}
-	if err := c.WriteCell(ctx, mapCellTimeMin, c2); err != nil {
-		return fmt.Errorf("запись 0x%03X: %w", mapCellTimeMin, err)
-	}
-	if err := c.WriteCommand(ctx, ComMAPCallLoadEEProm); err != nil {
-		return fmt.Errorf("фиксация: %w", err)
-	}
-	cells, _ := readCellRanges(ctx, c, []uint16{mapCellTimeCyr, mapCellTimeMin})
+	cells, _ := conn.ReadCells(ctx, []uint16{mapCellTimeCyr, mapCellTimeMin})
 	if got, ok := cells[mapCellTimeCyr]; ok && got != c1 {
 		return fmt.Errorf("верификация 0x%03X: получено %d, ждали %d", mapCellTimeCyr, got, c1)
 	}

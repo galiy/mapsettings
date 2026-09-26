@@ -114,6 +114,84 @@ func TestMapSettingsSplitRaw(t *testing.T) {
 	}
 }
 
+// TestMapSettingsLinked проверяет связанные пары «основная + _dop».
+func TestMapSettingsLinked(t *testing.T) {
+	// uacc10: (main<<UACC)+dop, /10.
+	p := mapParamSpec{Addr: 0x13D, Scale: 0.1, Link: &mapLink{Addr: 0x102, Kind: "uacc10"}}
+	cells := map[uint16]byte{0x13D: 116, 0x102: 0, mapCellUACC: 2}
+	if raw, ok := rawValue(p, cells); !ok || raw != 464 {
+		t.Fatalf("uacc10 rawValue=%d ok=%v", raw, ok)
+	}
+	main, dop, err := linkedBytes(p, 46.4, 2)
+	if err != nil || main != 116 || dop != 0 {
+		t.Fatalf("uacc10 linkedBytes=%d,%d,%v", main, dop, err)
+	}
+	// u16_hi: main + dop<<8.
+	p2 := mapParamSpec{Addr: 0x181, Scale: 25, Link: &mapLink{Addr: 0x101, Kind: "u16_hi"}}
+	main, dop, err = linkedBytes(p2, 1900, 0)
+	if err != nil || main != 76 || dop != 0 {
+		t.Fatalf("u16_hi linkedBytes=%d,%d,%v", main, dop, err)
+	}
+	if raw, ok := rawValue(p2, map[uint16]byte{0x181: 76, 0x101: 1}); !ok || raw != 332 {
+		t.Fatalf("u16_hi rawValue=%d ok=%v", raw, ok)
+	}
+	// cacc: Ah = (main+dop<<8)*25 >> UACC.
+	pc := mapParamSpec{Addr: 0x181, Scale: 1, Link: &mapLink{Addr: 0x101, Kind: "cacc"}}
+	if _, disp, ok := linkedValue(pc, map[uint16]byte{0x181: 76, 0x101: 0, mapCellUACC: 2}); !ok || disp != 475 {
+		t.Fatalf("cacc linkedValue=%v ok=%v", disp, ok)
+	}
+	main, dop, err = linkedBytes(pc, 475, 2)
+	if err != nil || main != 76 || dop != 0 {
+		t.Fatalf("cacc linkedBytes=%d,%d,%v", main, dop, err)
+	}
+	// pow2: main*100, dop=1 удваивает.
+	p3 := mapParamSpec{Addr: 0x168, Scale: 100, Link: &mapLink{Addr: 0x107, Kind: "pow2"}}
+	main, dop, err = linkedBytes(p3, 16000, 0)
+	if err != nil || main != 160 || dop != 0 {
+		t.Fatalf("pow2 linkedBytes=%d,%d,%v", main, dop, err)
+	}
+	if main, dop, err = linkedBytes(p3, 51000, 0); err != nil || main != 255 || dop != 1 {
+		t.Fatalf("pow2 max linkedBytes=%d,%d,%v", main, dop, err)
+	}
+}
+
+// TestMapSettingsHighMask проверяет маску старшего байта (BMS/MPPT).
+func TestMapSettingsHighMask(t *testing.T) {
+	p := mapParamSpec{Addr: 0x480, Width: 2, Order: "lh", Scale: 0.01, HighMask: 0x7F}
+	// Старший бит (0x80) в H должен отбрасываться: (0x80<<8)|0x56 → 0x0056.
+	cells := map[uint16]byte{0x480: 0x56, 0x481: 0x80}
+	if raw, ok := rawValue(p, cells); !ok || raw != 0x56 {
+		t.Fatalf("high_mask raw=%d ok=%v", raw, ok)
+	}
+	// 342 = 3.42В.
+	cells[0x480], cells[0x481] = 0x56, 0x01 // 0x0156 = 342
+	if raw, ok := rawValue(p, cells); !ok || raw != 342 {
+		t.Fatalf("high_mask raw=%d ok=%v", raw, ok)
+	}
+	if got := displayValue(p, 342); got != 3.42 {
+		t.Fatalf("displayValue=%g", got)
+	}
+}
+
+// TestMapSettingsSignedPair проверяет знаковую пару токов фаз (i16_hi7).
+func TestMapSettingsSignedPair(t *testing.T) {
+	p := mapParamSpec{Addr: 0x528, Scale: 0.1, Link: &mapLink{Addr: 0x529, Kind: "i16_hi7"}}
+	// +30.0 A: L=0x2E(46? нет), считаем 300 → L=0x2C, H=0x01 → (44 + 256)/10 = 30.0
+	_, v, ok := linkedValue(p, map[uint16]byte{0x528: 0x2C, 0x529: 0x01})
+	if !ok || v != 30.0 {
+		t.Fatalf("i16_hi7 +: v=%v ok=%v", v, ok)
+	}
+	// -30.0 A: знак в бите7 H.
+	_, v, ok = linkedValue(p, map[uint16]byte{0x528: 0x2C, 0x529: 0x81})
+	if !ok || v != -30.0 {
+		t.Fatalf("i16_hi7 -: v=%v ok=%v", v, ok)
+	}
+	main, dop, err := linkedBytes(p, -30.0, 0)
+	if err != nil || main != 0x2C || dop != 0x81 {
+		t.Fatalf("i16_hi7 bytes=%02X,%02X,%v", main, dop, err)
+	}
+}
+
 // TestMapSettingsNormalizeMode проверяет синонимы режимов.
 func TestMapSettingsNormalizeMode(t *testing.T) {
 	cases := map[string]string{
@@ -132,7 +210,7 @@ func TestMapSettingsNormalizeMode(t *testing.T) {
 func TestMapSettingsHelp(t *testing.T) {
 	p := mapParamSpec{Name: "Напряжение АКБ", Cell: "_UACC", Addr: 0x405, Desc: "среднее напряжение",
 		Enum: map[string]string{"0": "нет"}, Bits: []mapBit{{Bit: 0, Name: "флаг"}}}
-	h := paramHelp(p)
+	h := paramHelp(p, mapModeTitanator)
 	for _, want := range []string{"среднее напряжение", "нет", "флаг"} {
 		if !strings.Contains(h, want) {
 			t.Errorf("подсказка не содержит %q: %q", want, h)

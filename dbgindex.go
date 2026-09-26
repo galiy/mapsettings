@@ -97,14 +97,14 @@ func structuralDbgEntries(mode string) ([]dbgEntry, error) {
 		seen[id] = true
 		out = append(out, dbgEntry{N: len(out) + 1, ID: id, Label: label})
 	}
-	addParam := func(p mapParamSpec, group string) {
+	addParam := func(p mapParamSpec, group, mode string) {
 		danger := dangerKeys[p.Key]
 		q := group + " → " + p.Name
 		add(p.Key+":name", "текст (имя параметра): "+q)
 		if danger {
 			add(p.Key+":danger", "метка «▲ Опасно!» (span): "+q)
 		}
-		if paramHelp(p) != "" {
+		if paramHelp(p, mode) != "" {
 			add(p.Key+":help", "кнопка «?» (подсказка): "+q)
 		}
 		switch {
@@ -127,9 +127,9 @@ func structuralDbgEntries(mode string) ([]dbgEntry, error) {
 					}
 				}
 			}
-		case len(p.Enum) > 0:
+		case len(paramEnum(p, mode)) > 0:
 			add(p.Key+":value", "радиогруппа (div): "+q)
-			for _, o := range paramOptions(p) {
+			for _, o := range paramOptions(p, mode) {
 				add(p.Key+":opt:"+jsNum(o.Value),
 					"радиокнопка «"+o.Label+"» (input radio, код "+jsNum(o.Value)+"): "+q)
 			}
@@ -153,17 +153,20 @@ func structuralDbgEntries(mode string) ([]dbgEntry, error) {
 		}
 	}
 
-	// Главная: настройки программы, форма времени (и подсказки «?»).
+	// Главная: блоки настроек связи, форма времени (и подсказки «?»).
 	add("hdr:title", "h1 заголовок «Настройки МАП»")
 	add("hdr:sub", "текст (подзаголовок) «Чтение и запись…»")
-	add("field:mode", "выпадающий список (select) «Модель»")
-	add("msMode:help", "кнопка «?» у «Модель»")
-	add("field:ip", "поле ввода текста (input) «IP»")
-	add("msIP:help", "кнопка «?» у «IP»")
-	add("field:port", "поле ввода числа (input) «Порт»")
-	add("msPort:help", "кнопка «?» у «Порт»")
-	add("btn:read", "кнопка «Перечитать» (главная)")
-	add("msRead:help", "кнопка «?» у «Перечитать» (главная)")
+	add("cfg:read:title", "h2 заголовок блока «Чтение»")
+	add("cfg:read:proto", "выпадающий список (select) «Протокол» (чтение)")
+	add("rdProto:help", "кнопка «?» у «Протокол» (чтение)")
+	add("cfg:write:title", "h2 заголовок блока «Запись»")
+	add("cfg:write:proto", "выпадающий список (select) «Протокол» (запись)")
+	add("wrProto:help", "кнопка «?» у «Протокол» (запись)")
+	add("model", "текст (span) «Тип МАП»")
+	add("btn:read", "кнопка «Читать» (главная)")
+	add("msRead:help", "кнопка «?» у «Читать» (главная)")
+	add("btn:clear", "кнопка «Очистить» (главная)")
+	add("msClear:help", "кнопка «?» у «Очистить» (главная)")
 	add("sec:time:title", "h2 заголовок «Текущее время МАП»")
 	add("field:timeH", "поле ввода числа (input) «Часы»")
 	add("msTimeH:help", "кнопка «?» у «Часы»")
@@ -181,10 +184,8 @@ func structuralDbgEntries(mode string) ([]dbgEntry, error) {
 	add("nav:actions", "кнопка навигации (button) — раздел «Управляющие воздействия»")
 
 	// Шапка раздела.
-	add("sec:read", "кнопка «Перечитать» (раздел)")
-	add("msSecRead:help", "кнопка «?» у «Перечитать» (раздел)")
-	add("sec:write", "кнопка «Записать» (раздел)")
-	add("msSecWrite:help", "кнопка «?» у «Записать» (раздел)")
+	add("sec:read", "кнопка «Читать» (раздел)")
+	add("msSecRead:help", "кнопка «?» у «Читать» (раздел)")
 	add("sec:home", "кнопка «На главную» (раздел)")
 	add("msSecHome:help", "кнопка «?» у «На главную» (раздел)")
 
@@ -196,7 +197,7 @@ func structuralDbgEntries(mode string) ([]dbgEntry, error) {
 				add(fmt.Sprintf("settings:%s:Настройки:th:%s", g.name, h), "th заголовок колонки «"+h+"»: "+g.name)
 			}
 			for _, p := range g.settings {
-				addParam(p, g.name)
+				addParam(p, g.name, mode)
 			}
 		}
 		if len(g.monitor) > 0 {
@@ -205,7 +206,7 @@ func structuralDbgEntries(mode string) ([]dbgEntry, error) {
 				add(fmt.Sprintf("monitor:%s:Мониторинг:th:%s", g.name, h), "th заголовок колонки «"+h+"»: "+g.name)
 			}
 			for _, p := range g.monitor {
-				addParam(p, g.name)
+				addParam(p, g.name, mode)
 			}
 		}
 	}

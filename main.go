@@ -12,34 +12,30 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"log"
-	"net"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
-	"strings"
 	"time"
 )
 
 // version подставляется через -ldflags "-X main.version=..." (по умолчанию dev).
 var version = "dev"
 
-// debug включает отладочную нумерацию элементов интерфейса (#N). Подставляется
-// через -ldflags "-X main.debug=true" (цель make build-debug); по умолчанию
-// пусто (выключено), и наведение номеров не показывает.
+// debug включает отладочную нумерацию элементов интерфейса (№N). Подставляется
+// через -ldflags "-X main.debug=true" (цель make build-debug).
 var debug = ""
 
-// debugEnabled сообщает, собиралась ли программа с отладочной нумерацией.
 func debugEnabled() bool { return debug != "" }
 
-// cfgPath — путь к локальному конфигу (mapsettings.json), сохраняется сервером
-// при изменении режима/IP/порта. Файл в .gitignore.
+// cfgPath — путь к локальному конфигу (mapsettings.json) рядом с модулем.
 var cfgPath string
 
 func main() {
 	var (
-		listen  = flag.String("listen", ":8099", "адрес прослушивания HTTP (напр. :8099 или 127.0.0.1:8099)")
-		mapAddr = flag.String("map", "192.168.13.60:502", "адрес mapgateway (host:port), по умолчанию для UI")
-		unit    = flag.Int("unit", 1, "Modbus-адрес МАП (unit id)")
+		listen  = flag.String("listen", "", "адрес прослушивания HTTP (напр. :8099); переопределяет конфиг")
 		user    = flag.String("user", "", "HTTP Basic: логин (пусто — без авторизации)")
 		pass    = flag.String("pass", "", "HTTP Basic: пароль")
 		showVer = flag.Bool("version", false, "показать версию и выйти")
@@ -74,100 +70,54 @@ func main() {
 		return
 	}
 
-	// Какие флаги заданы явно (они приоритетнее конфига).
 	set := map[string]bool{}
 	flag.Visit(func(f *flag.Flag) { set[f.Name] = true })
 
 	cfgPath = configPath()
+	// Лог рядом с программой: все значимые действия, результаты и ошибки.
+	logPath := filepath.Join(filepath.Dir(cfgPath), "mapsettings.log")
+	if lf, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644); err == nil {
+		log.SetOutput(io.MultiWriter(os.Stderr, lf))
+		log.SetFlags(log.LstdFlags)
+		log.Printf("map-settings: лог %s", logPath)
+	} else {
+		log.Printf("map-settings: не удалось открыть лог %s: %v", logPath, err)
+	}
 	fc := loadFileConfig(cfgPath)
-
-	effListen := *listen
-	if !set["listen"] && fc != nil && fc.Listen != "" {
-		effListen = fc.Listen
-	}
-	effMap := *mapAddr
-	if !set["map"] && fc != nil && fc.Map != "" {
-		effMap = fc.Map
-	}
-	effUnit := *unit
-	if !set["unit"] && fc != nil && fc.Unit != 0 {
-		effUnit = fc.Unit
-	}
-	effUser, effPass := *user, *pass
-	if !set["user"] && fc != nil && fc.User != "" {
-		effUser = fc.User
-	}
-	if !set["pass"] && fc != nil && fc.Pass != "" {
-		effPass = fc.Pass
-	}
-
-	ip, port, err := splitHostPort(effMap)
-	if err != nil {
-		log.Fatalf("map-settings: адрес МАП: %v", err)
-	}
-	if effUnit <= 0 || effUnit > 255 {
-		log.Fatalf("map-settings: некорректный unit %d", effUnit)
-	}
-	// IP/порт по умолчанию для UI: из конфига, если сохранены. Тип МАП не
-	// хранится — определяется автоматически (_DevOpt) при первом чтении;
-	// устаревшее поле "mode" используется только как резерв при отсутствии
-	// связи с МАП.
-	mode := normalizeMapMode(loadLegacyMode(cfgPath))
-	if fc != nil && fc.IP != "" {
-		ip = fc.IP
-	}
-	if fc != nil && fc.Port != 0 {
-		port = fc.Port
-	}
-	defaults = mapSettingsTarget{mode: mode, ip: ip, port: port, unit: byte(effUnit)}
-
-	// Стартовый конфиг: если файла нет — создаём его с текущими значениями.
 	if fc == nil {
-		fc = &fileConfig{
-			Listen: effListen, Map: effMap, Unit: effUnit,
-			User: effUser, Pass: effPass,
-			IP: defaults.ip, Port: defaults.port,
-		}
+		c := defaultConfig()
+		fc = &c
 		if err := saveFileConfig(cfgPath, fc); err != nil {
 			log.Printf("map-settings: не удалось создать конфиг %s: %v", cfgPath, err)
 		} else {
 			log.Printf("map-settings: создан стартовый конфиг %s", cfgPath)
 		}
 	}
+	normalizeConfig(fc)
+	if set["listen"] && *listen != "" {
+		fc.Listen = *listen
+	}
+	if fc.User == "" && *user != "" {
+		fc.User = *user
+	}
+	if fc.Pass == "" && *pass != "" {
+		fc.Pass = *pass
+	}
+	setCfg(*fc)
 
-	mux := newMux(effUser, effPass)
+	mux := newMux(fc.User, fc.Pass)
 	srv := &http.Server{
-		Addr:              effListen,
+		Addr:              fc.Listen,
 		Handler:           mux,
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		IdleTimeout:       60 * time.Second,
 	}
-	log.Printf("map-settings %s: http://%s/ (МАП по умолчанию %s:%d, unit %d; конфиг %s)",
-		version, effListen, defaults.ip, defaults.port, defaults.unit, cfgPath)
+	log.Printf("map-settings %s: http://%s/ (чтение: %s; запись: %s; конфиг %s)",
+		version, fc.Listen, connSummary(fc.Read), connSummary(fc.Write), cfgPath)
 	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Fatalf("map-settings: %v", err)
 	}
-}
-
-// splitHostPort разбирает "host:port"; при отсутствии порта берёт 502.
-func splitHostPort(s string) (string, int, error) {
-	s = strings.TrimSpace(s)
-	if s == "" {
-		return "", 0, fmt.Errorf("пустой адрес")
-	}
-	host, portStr, err := net.SplitHostPort(s)
-	if err != nil {
-		if strings.Contains(s, ":") {
-			return "", 0, err
-		}
-		host, portStr = s, "502"
-	}
-	port, err := strconv.Atoi(portStr)
-	if err != nil || port <= 0 || port > 65535 {
-		return "", 0, fmt.Errorf("некорректный порт %q", portStr)
-	}
-	return host, port, nil
 }
 
 // writeJSON/writeJSONStatus — небольшие помощники ответов API.

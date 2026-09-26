@@ -10,29 +10,110 @@
 <div class="top-nav">
   <div>
     <h1 class="ttl" data-dbgid="hdr:title">Настройки МАП</h1>
-    <p class="sub" data-dbgid="hdr:sub">Чтение и запись ячеек МАП через mapgateway (Modbus TCP)</p>
+    <p class="sub" data-dbgid="hdr:sub">Чтение и запись ячеек МАП</p>
   </div>
 </div>
 
-<!-- Главная: настройки программы, время МАП и кнопки разделов. -->
+<!-- Главная: настройки связи (чтение/запись), время МАП и список разделов. -->
 <div id="msHome">
   <div class="group ms-panel">
-    <div class="ms-controls">
-      <label class="ms-field" data-dbgid="field:mode">Модель
-        <select id="msMode">
-          <option value="dominator">Доминатор</option>
-          <option value="titanator">Титанатор</option>
-        </select>
-      </label>
-      <label class="ms-field" data-dbgid="field:ip">IP
-        <input id="msIP" type="text" inputmode="decimal" autocomplete="off" spellcheck="false">
-      </label>
-      <label class="ms-field" data-dbgid="field:port">Порт
-        <input id="msPort" type="number" min="1" max="65535" step="1" autocomplete="off">
-      </label>
-      <button id="msRead" class="nav-btn" type="button" data-dbgid="btn:read">Перечитать</button>
+    <div class="ms-cfg-grid">
+      <div class="ms-cfg-block">
+        <h2 class="ms-h2" data-dbgid="cfg:read:title">Чтение</h2>
+        <label class="ms-field" data-dbgid="cfg:read:proto">Протокол
+          <select id="rdProto">
+            <option value="modbus">MODBUS</option>
+            <option value="microart">MICROART</option>
+            <option value="malina">Малина</option>
+          </select>
+        </label>
+        <div id="rdTcpCom">
+          <label class="ms-field">Транспорт
+            <select id="rdTransport">
+              <option value="tcp">TCP</option>
+              <option value="com">COM</option>
+            </select>
+          </label>
+          <label class="ms-field rd-tcp">IP
+            <input id="rdIP" type="text" autocomplete="off" spellcheck="false">
+          </label>
+          <label class="ms-field rd-tcp">Порт
+            <input id="rdPort" type="number" min="1" max="65535">
+          </label>
+          <label class="ms-field rd-com">COM-порт
+            <select id="rdSerial"></select>
+          </label>
+          <label class="ms-field rd-com">Скорость
+            <select id="rdBaud"></select>
+          </label>
+          <label class="ms-field">Unit
+            <input id="rdUnit" type="number" min="1" max="255">
+          </label>
+        </div>
+        <div id="rdMalina">
+          <label class="ms-field">Адрес/хост
+            <input id="rdHost" type="text" autocomplete="off">
+          </label>
+          <label class="ms-field">Логин
+            <input id="rdLogin" type="text" autocomplete="off">
+          </label>
+          <label class="ms-field">Пароль
+            <input id="rdPass" type="password" autocomplete="new-password">
+          </label>
+        </div>
+      </div>
+
+      <div class="ms-cfg-block">
+        <h2 class="ms-h2" data-dbgid="cfg:write:title">Запись</h2>
+        <label class="ms-field" data-dbgid="cfg:write:proto">Протокол
+          <select id="wrProto">
+            <option value="microart">MICROART</option>
+            <option value="malina">Малина</option>
+          </select>
+        </label>
+        <div id="wrTcpCom">
+          <label class="ms-field">Транспорт
+            <select id="wrTransport">
+              <option value="tcp">TCP</option>
+              <option value="com">COM</option>
+            </select>
+          </label>
+          <label class="ms-field wr-tcp">IP
+            <input id="wrIP" type="text" autocomplete="off" spellcheck="false">
+          </label>
+          <label class="ms-field wr-tcp">Порт
+            <input id="wrPort" type="number" min="1" max="65535">
+          </label>
+          <label class="ms-field wr-com">COM-порт
+            <select id="wrSerial"></select>
+          </label>
+          <label class="ms-field wr-com">Скорость
+            <select id="wrBaud"></select>
+          </label>
+          <label class="ms-field">Unit
+            <input id="wrUnit" type="number" min="1" max="255">
+          </label>
+        </div>
+        <div id="wrMalina">
+          <label class="ms-field">Адрес/хост
+            <input id="wrHost" type="text" autocomplete="off">
+          </label>
+          <label class="ms-field">Логин
+            <input id="wrLogin" type="text" autocomplete="off">
+          </label>
+          <label class="ms-field">Пароль
+            <input id="wrPass" type="password" autocomplete="new-password">
+          </label>
+        </div>
+      </div>
     </div>
-    <div id="msStatus" class="ms-status">Нажмите «Перечитать», чтобы загрузить параметры.</div>
+
+    <div class="ms-controls">
+      <span class="ms-model">Тип МАП: <b id="msModel" data-dbgid="model">не определён</b></span>
+      <button id="msRead" class="nav-btn" type="button" data-dbgid="btn:read">Читать</button>
+      <button id="msClear" class="nav-btn secondary" type="button" data-dbgid="btn:clear">Очистить</button>
+    </div>
+    <div id="msStatus" class="ms-status">Нажмите «Читать», чтобы загрузить параметры.</div>
   </div>
 
   <div class="group ms-panel ms-time">
@@ -44,8 +125,8 @@
       <label class="ms-field" data-dbgid="field:timeM">Минуты
         <input id="msTimeM" type="number" min="0" max="59" step="1">
       </label>
-      <button id="msTimeRead" class="nav-btn secondary" type="button" data-dbgid="btn:timeRead">Прочитать время</button>
-      <button id="msTimeWrite" class="nav-btn" type="button" data-dbgid="btn:timeWrite">Записать время</button>
+      <button id="msTimeRead" class="nav-btn secondary" type="button" data-dbgid="btn:timeRead">Прочитать</button>
+      <button id="msTimeWrite" class="nav-btn" type="button" data-dbgid="btn:timeWrite">Записать</button>
     </div>
     <div id="msTimeStatus" class="ms-status"></div>
   </div>
@@ -53,17 +134,26 @@
   <div id="msHomeNav" class="ms-nav-list"></div>
 </div>
 
-<!-- Экран раздела: шапка с кнопками и содержимое. -->
+<!-- Экран раздела. -->
 <div id="msSection" hidden>
   <div class="group ms-panel ms-sec-bar">
-    <button id="msSecRead" class="nav-btn" type="button" data-dbgid="sec:read">Перечитать</button>
-    <button id="msSecWrite" class="nav-btn" type="button" data-dbgid="sec:write">Записать</button>
+    <button id="msSecRead" class="nav-btn" type="button" data-dbgid="sec:read">Читать</button>
     <button id="msSecHome" class="nav-btn secondary" type="button" data-dbgid="sec:home">На главную</button>
     <span id="msSecTitle" class="ms-sec-title"></span>
     <div id="msSecStatus" class="ms-status"></div>
   </div>
   <div id="msSecNav" class="ms-nav-list ms-sec-nav"></div>
   <div id="msSecBody"></div>
+</div>
+
+<div id="msDialog" class="ms-dialog" hidden>
+  <div class="ms-dialog-box">
+    <div id="msDialogTitle" class="ms-dialog-title"></div>
+    <div id="msDialogText" class="ms-dialog-text"></div>
+    <div class="ms-dialog-actions">
+      <button id="msDialogOk" class="nav-btn" type="button">OK</button>
+    </div>
+  </div>
 </div>
 
 <div class="foot" id="msFoot"></div>
