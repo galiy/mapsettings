@@ -698,7 +698,6 @@ type mapSettingView struct {
 var dangerKeys = map[string]bool{
 	"pow": true, "uacc": true, "devopt": true,
 	"fuacc_korr": true, "pow_korr": true, "i_chage_korr": true,
-	"lcd_cichargeend":   true,
 	"tft_cichargesoc95": true,
 	"deluchargeend":     true,
 	"tft_soc_discharge": true, "tft_soc_startcharge": true, "tft_soc_dizstart": true,
