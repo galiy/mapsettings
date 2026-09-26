@@ -116,6 +116,14 @@ func configPath() string {
 		return configFileName
 	}
 	dir := filepath.Dir(exe)
+	// При `go run` бинарник лежит во временном каталоге: конфиг берём из
+	// текущего каталога, иначе старый файл рядом с временным бинарником мог бы
+	// перекрыть рабочий.
+	if isTempDir(dir) {
+		if wd, err := os.Getwd(); err == nil {
+			return filepath.Join(wd, configFileName)
+		}
+	}
 	if _, err := os.Stat(filepath.Join(dir, configFileName)); err == nil {
 		return filepath.Join(dir, configFileName)
 	}
@@ -123,6 +131,23 @@ func configPath() string {
 		return filepath.Join(wd, configFileName)
 	}
 	return filepath.Join(dir, configFileName)
+}
+
+// isTempDir сообщает, что каталог находится внутри системного временного
+// каталога (так собирает бинарник `go run`).
+func isTempDir(dir string) bool {
+	tmp := os.TempDir()
+	if resolved, err := filepath.EvalSymlinks(tmp); err == nil {
+		tmp = resolved
+	}
+	if resolved, err := filepath.EvalSymlinks(dir); err == nil {
+		dir = resolved
+	}
+	rel, err := filepath.Rel(tmp, dir)
+	if err != nil {
+		return false
+	}
+	return rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)))
 }
 
 // loadFileConfig читает конфиг; отсутствие файла — не ошибка (nil).

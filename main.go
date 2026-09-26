@@ -9,6 +9,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -18,10 +19,12 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -80,7 +83,9 @@ func main() {
 	cfgPath = configPath()
 	// Лог рядом с программой: все значимые действия, результаты и ошибки.
 	logPath := filepath.Join(filepath.Dir(cfgPath), "mapsettings.log")
+	var logFile *os.File
 	if lf, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644); err == nil {
+		logFile = lf
 		log.SetOutput(io.MultiWriter(os.Stderr, lf))
 		log.SetFlags(log.LstdFlags)
 		log.Printf("map-settings: лог %s", logPath)
@@ -114,8 +119,14 @@ func main() {
 		Handler:           mux,
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       30 * time.Second,
-		IdleTimeout:       60 * time.Second,
+		// Медленные операции с МАП идут до readTimeout; даём запас на запись
+		// ответа, чтобы клиент не получил обрыв на длинной операции.
+		WriteTimeout: readTimeout + 30*time.Second,
+		IdleTimeout:  60 * time.Second,
 	}
+	// Завершение по SIGINT/SIGTERM: корректно закрываем сервер и файл лога.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
 	// Свободный порт: пробуем заданный, при занятости берём любой свободный.
 	ln, url, err := listenUI(fc.Listen)
 	if err != nil {
@@ -124,9 +135,10 @@ func main() {
 	log.Printf("map-settings %s: UI доступен по адресу %s (чтение: %s; запись: %s; конфиг %s)",
 		version, url, connSummary(fc.Read), connSummary(fc.Write), cfgPath)
 	// Сервер стартуем сразу; браузер открываем после готовности прослушивания.
+	errCh := make(chan error, 1)
 	go func() {
 		if err := srv.Serve(ln); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("map-settings: %v", err)
+			errCh <- err
 		}
 	}()
 	waitReady(ln.Addr())
@@ -136,7 +148,20 @@ func main() {
 	} else {
 		log.Printf("map-settings: графический дисплей не обнаружен — откройте %s вручную", url)
 	}
-	select {}
+	select {
+	case err := <-errCh:
+		log.Printf("map-settings: сервер остановлен с ошибкой: %v", err)
+	case <-ctx.Done():
+		log.Printf("map-settings: получен сигнал завершения — останавливаю сервер")
+	}
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		log.Printf("map-settings: корректное завершение сервера: %v", err)
+	}
+	if logFile != nil {
+		_ = logFile.Close()
+	}
 }
 
 // waitReady ждёт, пока сервер начнёт принимать соединения (до ~3 с).

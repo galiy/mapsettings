@@ -17,6 +17,7 @@ import (
 	"io/fs"
 	"log"
 	"net/http"
+	"net/url"
 	"sort"
 	"strings"
 	"sync"
@@ -47,13 +48,19 @@ func setCfg(c fileConfig) {
 // readTimeout — верхняя граница на медленные операции с МАП.
 const readTimeout = 90 * time.Second
 
+// writeMu сериализует операции записи (apply/action/time) на уровне всего
+// приложения: каждое обращение к МАП — это отдельная сессия записи
+// (EEProm WR → запись → load_EEProm), и параллельные запросы из разных вкладок
+// не должны перекрывать её.
+var writeMu sync.Mutex
+
 func newMux(user, pass string) http.Handler {
 	mux := http.NewServeMux()
 	sub, err := fs.Sub(webFS, "web")
 	if err != nil {
 		log.Fatalf("map-settings: web: %v", err)
 	}
-	mux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.FS(sub))))
+	mux.Handle("/static/", noStore(http.StripPrefix("/static/", http.FileServer(http.FS(sub)))))
 	auth := basicAuth(user, pass)
 	mux.Handle("/api/config", auth(http.HandlerFunc(apiConfig)))
 	mux.Handle("/api/ports", auth(http.HandlerFunc(apiPorts)))
@@ -65,7 +72,49 @@ func newMux(user, pass string) http.Handler {
 	mux.Handle("/api/relays", auth(http.HandlerFunc(apiRelays)))
 	mux.Handle("/api/time", auth(http.HandlerFunc(apiTime)))
 	mux.HandleFunc("/", indexHandler)
-	return mux
+	return csrfGuard(mux)
+}
+
+// noStore запрещает кэширование ответа (единообразно с index/API).
+func noStore(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-store")
+		next.ServeHTTP(w, r)
+	})
+}
+
+// csrfGuard отклоняет мутирующие запросы с чужого Origin. Отсутствие Origin
+// (curl, иные CLI-клиенты) не блокируется; браузер его присылает, и тогда хост
+// должен совпадать с хостом запроса. Это защита от «localhost-атак» со сторонних
+// веб-страниц, когда Basic-авторизация выключена.
+func csrfGuard(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet, http.MethodHead, http.MethodOptions:
+			next.ServeHTTP(w, r)
+			return
+		}
+		if !sameOriginRequest(r) {
+			log.Printf("map-settings: отклонён запрос с чужого Origin %q на %s %s",
+				r.Header.Get("Origin"), r.Method, r.URL.Path)
+			http.Error(w, "cross-origin request rejected", http.StatusForbidden)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// sameOriginRequest проверяет, что Origin (если задан) совпадает с хостом запроса.
+func sameOriginRequest(r *http.Request) bool {
+	origin := strings.TrimSpace(r.Header.Get("Origin"))
+	if origin == "" {
+		return true
+	}
+	u, err := url.Parse(origin)
+	if err != nil || u.Host == "" {
+		return false
+	}
+	return strings.EqualFold(u.Host, r.Host)
 }
 
 func basicAuth(user, pass string) func(http.Handler) http.Handler {
@@ -120,9 +169,19 @@ func apiConfig(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "запись: "+err.Error(), http.StatusBadRequest)
 			return
 		}
+		// listen/user/pass задаются при запуске (флагами или файлом). UI их не
+		// присылает — сохраняем текущие значения; непустые значения из запроса
+		// позволяют изменить их через API (пустая строка = «оставить как есть»).
 		cur := cfgSnapshot()
-		req.Listen = cur.Listen
-		req.User, req.Pass = cur.User, cur.Pass
+		if req.Listen == "" {
+			req.Listen = cur.Listen
+		}
+		if req.User == "" {
+			req.User = cur.User
+		}
+		if req.Pass == "" {
+			req.Pass = cur.Pass
+		}
 		if err := saveFileConfig(cfgPath, &req); err != nil {
 			log.Printf("map-settings: сохранение конфига %s: %v", cfgPath, err)
 		}
@@ -163,7 +222,7 @@ func apiSettings(w http.ResponseWriter, r *http.Request) {
 	conn, err := openConn(c.Read)
 	if err != nil {
 		log.Printf("чтение снимка: ошибка подключения: %v", err)
-		http.Error(w, "чтение: "+err.Error(), http.StatusBadRequest)
+		http.Error(w, "чтение: "+err.Error(), http.StatusBadGateway)
 		return
 	}
 	defer conn.Close()
@@ -221,7 +280,7 @@ func apiParam(w http.ResponseWriter, r *http.Request) {
 	conn, err := openConn(c.Read)
 	if err != nil {
 		log.Printf("чтение параметра: %s; key=%q: ошибка подключения: %v", connParams(c.Read), key, err)
-		http.Error(w, "чтение: "+err.Error(), http.StatusBadRequest)
+		http.Error(w, "чтение: "+err.Error(), http.StatusBadGateway)
 		return
 	}
 	defer conn.Close()
@@ -254,13 +313,15 @@ func apiApply(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]any{"results": map[string]string{}})
 		return
 	}
+	writeMu.Lock()
+	defer writeMu.Unlock()
 	c := cfgSnapshot()
 	ctx, cancel := context.WithTimeout(r.Context(), readTimeout)
 	defer cancel()
 	conn, err := openConn(c.Write)
 	if err != nil {
 		log.Printf("запись: %s; ошибка подключения: %v", connParams(c.Write), err)
-		http.Error(w, "запись: "+err.Error(), http.StatusBadRequest)
+		http.Error(w, "запись: "+err.Error(), http.StatusBadGateway)
 		return
 	}
 	defer conn.Close()
@@ -295,13 +356,15 @@ func apiAction(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad json: "+err.Error(), http.StatusBadRequest)
 		return
 	}
+	writeMu.Lock()
+	defer writeMu.Unlock()
 	c := cfgSnapshot()
 	ctx, cancel := context.WithTimeout(r.Context(), readTimeout)
 	defer cancel()
 	conn, err := openConn(c.Write)
 	if err != nil {
 		log.Printf("команда: %s; key=%q: ошибка подключения: %v", connParams(c.Write), req.Key, err)
-		http.Error(w, "запись: "+err.Error(), http.StatusBadRequest)
+		http.Error(w, "запись: "+err.Error(), http.StatusBadGateway)
 		return
 	}
 	defer conn.Close()
@@ -351,7 +414,7 @@ func apiTime(w http.ResponseWriter, r *http.Request) {
 		defer cancel()
 		conn, err := openConn(c.Read)
 		if err != nil {
-			http.Error(w, "чтение: "+err.Error(), http.StatusBadRequest)
+			http.Error(w, "чтение: "+err.Error(), http.StatusBadGateway)
 			return
 		}
 		defer conn.Close()
@@ -375,12 +438,14 @@ func apiTime(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad json: "+err.Error(), http.StatusBadRequest)
 		return
 	}
+	writeMu.Lock()
+	defer writeMu.Unlock()
 	c := cfgSnapshot()
 	ctx, cancel := context.WithTimeout(r.Context(), readTimeout)
 	defer cancel()
 	conn, err := openConn(c.Write)
 	if err != nil {
-		http.Error(w, "запись: "+err.Error(), http.StatusBadRequest)
+		http.Error(w, "запись: "+err.Error(), http.StatusBadGateway)
 		return
 	}
 	defer conn.Close()

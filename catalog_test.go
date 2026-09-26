@@ -220,19 +220,3 @@ func TestMapSettingsHelp(t *testing.T) {
 		t.Errorf("подсказка не должна содержать имя параметра: %q", h)
 	}
 }
-
-// TestMapSettingsValidateTarget проверяет валидацию адреса/порта.
-func TestMapSettingsValidateTarget(t *testing.T) {
-	if _, err := validateMapTarget("dominator", "192.168.0.10", 502); err != nil {
-		t.Fatalf("корректный адрес отвергнут: %v", err)
-	}
-	if _, err := validateMapTarget("dominator", "", 502); err == nil {
-		t.Fatal("пустой IP должен отвергаться")
-	}
-	if _, err := validateMapTarget("dominator", "192.168.0.10", 0); err == nil {
-		t.Fatal("порт 0 должен отвергаться")
-	}
-	if _, err := validateMapTarget("dominator", "bad host!", 502); err == nil {
-		t.Fatal("недопустимые символы в хосте должны отвергаться")
-	}
-}

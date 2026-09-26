@@ -280,7 +280,7 @@
     fillPorts(rdSerial, r.serial || '');
     rdHost.value = r.host || ''; rdLogin.value = r.login || ''; rdPass.value = r.password || '';
 
-    wrProto.value = w.protocol || 'microart';
+    wrProto.value = w.protocol || 'malina';
     wrTransport.value = w.transport || 'tcp';
     wrIP.value = w.ip || ''; wrPort.value = w.port || 502; wrUnit.value = w.unit || 1;
     fillBaud(wrBaud); wrBaud.value = String(w.baud || 115200);
@@ -289,11 +289,6 @@
     applyCfgVisibility();
   }
   function applyCfgVisibility() {
-    function vis(proto, transport, tc, com, mal) {
-      if (proto === 'malina') { tc.hidden = true; mal.hidden = false; }
-      else { mal.hidden = true; tc.hidden = false; }
-      if (transport !== 'com') { com.hidden = true; tc.querySelector('.rd-tcp') && (tc.hidden = false); }
-    }
     // чтение
     var rdTC = gid('rdTcpCom'), rdM = gid('rdMalina');
     var rdIsMalina = rdProto.value === 'malina';

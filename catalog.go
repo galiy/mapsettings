@@ -33,7 +33,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
-	"net"
 	"sort"
 	"strconv"
 	"strings"
@@ -720,6 +719,26 @@ var dangerKeys = map[string]bool{
 	"verpo": true, "verplatnet": true,
 }
 
+// isDangerKey сообщает, относится ли параметр к опасным. normalizeCatalogPairs
+// может переименовать дублирующийся ключ, добавив суффикс "_%03x"; базовый ключ
+// при этом остаётся префиксом, поэтому проверяем и его.
+func isDangerKey(key string) bool {
+	if dangerKeys[key] {
+		return true
+	}
+	if len(key) > 4 && key[len(key)-4] == '_' {
+		base, suf := key[:len(key)-4], key[len(key)-3:]
+		for i := 0; i < len(suf); i++ {
+			c := suf[i]
+			if !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f') {
+				return false
+			}
+		}
+		return dangerKeys[base]
+	}
+	return false
+}
+
 // paramOptions строит список вариантов для перечислимого параметра: значение —
 // в отображаемых единицах (с учётом scale/offset), подпись — из документа.
 // paramEnum возвращает перечисление параметра с учётом модели МАП.
@@ -910,7 +929,7 @@ func settingView(p mapParamSpec, cells map[uint16]byte, mode string) mapSettingV
 	v := mapSettingView{
 		Key: p.Key, Cell: p.Cell, Addr: fmt.Sprintf("0x%03X", p.Addr),
 		Name: p.Name, Unit: p.Unit, Kind: p.Kind, Access: p.Access,
-		Writable: p.Access == "rw", Danger: dangerKeys[p.Key],
+		Writable: p.Access == "rw", Danger: isDangerKey(p.Key),
 		Format: p.Format, Fields: p.Fields, Columns: p.Columns, ShowValue: p.ShowValue,
 		Min: p.Min, Max: p.Max, Desc: p.Desc,
 		Scale: p.Scale, Offset: p.Offset,
@@ -1006,36 +1025,6 @@ func readMapSettingsSnapshot(ctx context.Context, r cellReader, mode string) (*m
 
 // --- Запись ---
 
-// mapSettingsTarget — адрес/режим, с которыми работает UI (задаются клиентом).
-type mapSettingsTarget struct {
-	mode string
-	ip   string
-	port int
-	unit byte
-}
-
-func (t mapSettingsTarget) address() string {
-	return net.JoinHostPort(t.ip, strconv.Itoa(t.port))
-}
-
-// validateMapTarget проверяет host/port, чтобы клиент не мог обратиться куда угодно.
-func validateMapTarget(mode, ip string, port int) (mapSettingsTarget, error) {
-	ip = strings.TrimSpace(ip)
-	if ip == "" {
-		return mapSettingsTarget{}, fmt.Errorf("не задан IP МАП")
-	}
-	for _, r := range ip {
-		if !(r == '.' || r == '-' || r == ':' || (r >= '0' && r <= '9') ||
-			(r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z')) {
-			return mapSettingsTarget{}, fmt.Errorf("недопустимый IP/хост: %q", ip)
-		}
-	}
-	if port <= 0 || port > 65535 {
-		return mapSettingsTarget{}, fmt.Errorf("недопустимый порт %d", port)
-	}
-	return mapSettingsTarget{mode: normalizeMapMode(mode), ip: ip, port: port, unit: 1}, nil
-}
-
 // applyMapSettings применяет изменения (только изменённые параметры) со служебным
 // обрамлением и верификацией. changes: key → новое отображаемое значение.
 func applyMapSettings(ctx context.Context, conn cellConn, mode string, changes map[string]float64, allowDanger bool) (map[string]string, error) {
@@ -1067,6 +1056,13 @@ func applyMapSettings(ctx context.Context, conn cellConn, mode string, changes m
 		uacc = int(u)
 	}
 	var writes []cellWrite
+	// Соответствие адрес → исходный ключ параметра (для понятных сообщений
+	// верификации и для связанных пар, у которых несколько ячеек).
+	addrKey := map[uint16]string{}
+	addWrite := func(addr uint16, b byte, key string) {
+		writes = append(writes, cellWrite{addr, b})
+		addrKey[addr] = key
+	}
 	// Командные (write-only) ячейки не читаются обратно для верификации.
 	skipVerify := map[uint16]bool{}
 	results := map[string]string{}
@@ -1082,7 +1078,7 @@ func applyMapSettings(ctx context.Context, conn cellConn, mode string, changes m
 		}
 		// Опасные параметры записываются только при явном подтверждении
 		// (allowDanger), которое клиент ставит после разблокировки в UI.
-		if dangerKeys[key] && !allowDanger {
+		if isDangerKey(key) && !allowDanger {
 			results[key] = "опасный параметр: запись не подтверждена"
 			continue
 		}
@@ -1110,8 +1106,10 @@ func applyMapSettings(ctx context.Context, conn cellConn, mode string, changes m
 				continue
 			}
 			writes = append(writes, cellWrite{p.Addr, main})
+			addrKey[p.Addr] = key
 			if p.Link.Addr != p.Addr {
 				writes = append(writes, cellWrite{p.Link.Addr, dop})
+				addrKey[p.Link.Addr] = key
 			}
 			if noVerifyKeys[key] {
 				skipVerify[p.Link.Addr] = true
@@ -1124,7 +1122,7 @@ func applyMapSettings(ctx context.Context, conn cellConn, mode string, changes m
 			continue
 		}
 		for i, b := range data {
-			writes = append(writes, cellWrite{p.Addr + uint16(i), b})
+			addWrite(p.Addr+uint16(i), b, key)
 		}
 	}
 	if len(writes) == 0 {
@@ -1140,17 +1138,32 @@ func applyMapSettings(ctx context.Context, conn cellConn, mode string, changes m
 	for _, w := range writes {
 		addrs = append(addrs, w.Addr)
 	}
-	cells, _ := conn.ReadCells(ctx, uniqueU16(addrs))
+	cells, errs := conn.ReadCells(ctx, uniqueU16(addrs))
+	readErr := strings.Join(errs, "; ")
 	for _, w := range writes {
 		if skipVerify[w.Addr] {
 			continue
 		}
+		key := addrKey[w.Addr]
+		if key == "" {
+			key = fmt.Sprintf("0x%03X", w.Addr)
+		}
+		if _, done := results[key]; done {
+			continue
+		}
 		got, ok := cells[w.Addr]
 		if !ok {
+			// Ошибку обратного чтения нельзя считать успешной верификацией:
+			// сообщаем о ней явно, с исходным ключом параметра.
+			if readErr != "" {
+				results[key] = "верификация: ошибка обратного чтения: " + readErr
+			} else {
+				results[key] = "верификация: нет данных обратного чтения"
+			}
 			continue
 		}
 		if got != w.Value {
-			results[fmt.Sprintf("0x%03X", w.Addr)] = fmt.Sprintf("верификация: получено %d, ждали %d", got, w.Value)
+			results[key] = fmt.Sprintf("верификация: получено %d, ждали %d", got, w.Value)
 		}
 	}
 	return results, nil
