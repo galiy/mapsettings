@@ -6,6 +6,8 @@
 
 ## [Unreleased]
 
+## [1.0.0] — 2026-09-26
+
 ### Изменено
 - При запуске программа сама подбирает свободный порт: пытается занять
   заданный (по умолчанию `:8099`), при занятости берёт любой свободный, и
@@ -292,5 +294,6 @@
 - Каталог ячеек (227 параметров) `catalog.json`, генерируемый `catalog_gen.py`
   из `protocol_MAP_cells_2026_07_15.doc`.
 
-[Unreleased]: https://github.com/galiy/mapsettings/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/galiy/mapsettings/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/galiy/mapsettings/releases/tag/v1.0.0
 [0.1.0]: https://github.com/galiy/mapsettings/releases/tag/v0.1.0

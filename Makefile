@@ -41,9 +41,10 @@ fmt:
 cross:
 	mkdir -p dist
 	GOOS=linux   GOARCH=amd64 go build -ldflags "$(LDFLAGS)" -o dist/mapsettings-linux-amd64-$(VERSION) .
+	GOOS=windows GOARCH=386   go build -ldflags "$(LDFLAGS)" -o dist/mapsettings-windows-386-$(VERSION).exe .
 	GOOS=windows GOARCH=amd64 go build -ldflags "$(LDFLAGS)" -o dist/mapsettings-windows-amd64-$(VERSION).exe .
-	GOOS=darwin  GOARCH=arm64 go build -ldflags "$(LDFLAGS)" -o dist/mapsettings-darwin-arm64-$(VERSION) .
 	GOOS=darwin  GOARCH=amd64 go build -ldflags "$(LDFLAGS)" -o dist/mapsettings-darwin-amd64-$(VERSION) .
+	GOOS=darwin  GOARCH=arm64 go build -ldflags "$(LDFLAGS)" -o dist/mapsettings-darwin-arm64-$(VERSION) .
 
 ## clean — удалить артефакты сборки
 clean:
