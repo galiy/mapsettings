@@ -331,20 +331,46 @@ func apiApply(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	log.Printf("запись: %s; режим=%s allowDanger=%v изменения[%s]", connParams(c.Write), mode, req.AllowDanger, keysText(req.Changes))
-	results, err := applyMapSettings(ctx, conn, mode, req.Changes, req.AllowDanger)
-	resp := map[string]any{"results": results}
+	plan, err := applyMapSettings(ctx, conn, mode, req.Changes, req.AllowDanger)
 	if err != nil {
+		resp := map[string]any{"results": planResults(plan)}
 		resp["error"] = err.Error()
 		log.Printf("запись: ошибка: %v", err)
 		writeJSONStatus(w, http.StatusBadGateway, resp)
 		return
 	}
-	if len(results) > 0 {
-		log.Printf("запись: не применено: %s", resultsText(results))
+	// Верификацию делаем каналом ЧТЕНИЯ (как читает UI), а не каналом записи:
+	// у Малины read_memory.php отдаёт кэш mapd, который сразу после записи может
+	// быть устаревшим. Канал записи закрываем, чтобы не держать два соединения
+	// (важно для COM).
+	_ = conn.Close()
+	if len(plan.writes) > 0 {
+		if vconn, verr := openConn(c.Read); verr != nil {
+			log.Printf("запись: обратное чтение недоступно (%s): %v", connSummary(c.Read), verr)
+			resp := map[string]any{"results": plan.results, "warning": "верификация не выполнена: " + verr.Error()}
+			writeJSON(w, resp)
+			return
+		} else {
+			verifyMapSettingsWrites(ctx, vconn, plan)
+			_ = vconn.Close()
+		}
+	}
+	resp := map[string]any{"results": plan.results}
+	if len(plan.results) > 0 {
+		log.Printf("запись: не применено: %s", resultsText(plan.results))
 	} else {
 		log.Printf("запись: успешно: %s", keysText(req.Changes))
 	}
 	writeJSON(w, resp)
+}
+
+// planResults безопасно достаёт результаты из плана записи (план может быть nil
+// при ошибке загрузки каталога).
+func planResults(plan *mapWritePlan) map[string]string {
+	if plan == nil {
+		return map[string]string{}
+	}
+	return plan.results
 }
 
 func apiAction(w http.ResponseWriter, r *http.Request) {

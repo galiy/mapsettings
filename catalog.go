@@ -1024,12 +1024,32 @@ func readMapSettingsSnapshot(ctx context.Context, r cellReader, mode string) (*m
 
 // --- Запись ---
 
+// mapWritePlan — итог подготовки и выполнения записи: какие байты ушли, по
+// какому ключу, что не проверять при верификации и накопленные сообщения.
+type mapWritePlan struct {
+	writes     []cellWrite
+	addrKey    map[uint16]string
+	skipVerify map[uint16]bool
+	results    map[string]string
+}
+
 // applyMapSettings применяет изменения (только изменённые параметры) со служебным
-// обрамлением и верификацией. changes: key → новое отображаемое значение.
-func applyMapSettings(ctx context.Context, conn cellConn, mode string, changes map[string]float64, allowDanger bool) (map[string]string, error) {
+// обрамлением. changes: key → новое отображаемое значение. Верификация чтением-
+// обратно выполняется отдельно (verifyMapSettingsWrites) — каналом ЧТЕНИЯ, чтобы
+// проверять то же представление, что затем показывает UI.
+func applyMapSettings(ctx context.Context, conn cellConn, mode string, changes map[string]float64, allowDanger bool) (*mapWritePlan, error) {
 	cat, err := loadMapSettingsCatalog()
 	if err != nil {
 		return nil, err
+	}
+	plan := &mapWritePlan{
+		addrKey:    map[uint16]string{},
+		skipVerify: map[uint16]bool{},
+		results:    map[string]string{},
+	}
+	addWrite := func(addr uint16, b byte, key string) {
+		plan.writes = append(plan.writes, cellWrite{addr, b})
+		plan.addrKey[addr] = key
 	}
 	byKey := make(map[string]mapParamSpec, len(cat.Params))
 	for _, p := range cat.Params {
@@ -1054,100 +1074,96 @@ func applyMapSettings(ctx context.Context, conn cellConn, mode string, changes m
 		}
 		uacc = int(u)
 	}
-	var writes []cellWrite
-	// Соответствие адрес → исходный ключ параметра (для понятных сообщений
-	// верификации и для связанных пар, у которых несколько ячеек).
-	addrKey := map[uint16]string{}
-	addWrite := func(addr uint16, b byte, key string) {
-		writes = append(writes, cellWrite{addr, b})
-		addrKey[addr] = key
-	}
-	// Командные (write-only) ячейки не читаются обратно для верификации.
-	skipVerify := map[uint16]bool{}
-	results := map[string]string{}
 	for key, val := range changes {
 		p, ok := byKey[key]
 		if !ok {
-			results[key] = "неизвестный параметр"
+			plan.results[key] = "неизвестный параметр"
 			continue
 		}
 		if p.Access != "rw" {
-			results[key] = "параметр только для чтения"
+			plan.results[key] = "параметр только для чтения"
 			continue
 		}
 		// Опасные параметры записываются только при явном подтверждении
 		// (allowDanger), которое клиент ставит после разблокировки в UI.
 		if isDangerKey(key) && !allowDanger {
-			results[key] = "опасный параметр: запись не подтверждена"
+			plan.results[key] = "опасный параметр: запись не подтверждена"
 			continue
 		}
 		// Ячейки 0x000..0x004 — служебная область команд/идентификации: запись
 		// настройкой недопустима (команды идут отдельным путём, см. actions).
 		if p.Addr <= 4 {
-			results[key] = "служебная ячейка — запись запрещена"
+			plan.results[key] = "служебная ячейка — запись запрещена"
 			continue
 		}
 		if p.Min != nil && val < *p.Min {
-			results[key] = fmt.Sprintf("ниже минимума %g", *p.Min)
+			plan.results[key] = fmt.Sprintf("ниже минимума %g", *p.Min)
 			continue
 		}
 		if p.Max != nil && val > *p.Max {
-			results[key] = fmt.Sprintf("выше максимума %g", *p.Max)
+			plan.results[key] = fmt.Sprintf("выше максимума %g", *p.Max)
 			continue
 		}
 		if noVerifyKeys[key] {
-			skipVerify[p.Addr] = true
+			plan.skipVerify[p.Addr] = true
 		}
 		if p.Link != nil {
 			main, dop, lerr := linkedBytes(p, val, uacc)
 			if lerr != nil {
-				results[key] = lerr.Error()
+				plan.results[key] = lerr.Error()
 				continue
 			}
-			writes = append(writes, cellWrite{p.Addr, main})
-			addrKey[p.Addr] = key
+			addWrite(p.Addr, main, key)
 			if p.Link.Addr != p.Addr {
-				writes = append(writes, cellWrite{p.Link.Addr, dop})
-				addrKey[p.Link.Addr] = key
+				addWrite(p.Link.Addr, dop, key)
 			}
 			if noVerifyKeys[key] {
-				skipVerify[p.Link.Addr] = true
+				plan.skipVerify[p.Link.Addr] = true
 			}
 			continue
 		}
 		data, err := splitRaw(p, val)
 		if err != nil {
-			results[key] = err.Error()
+			plan.results[key] = err.Error()
 			continue
 		}
 		for i, b := range data {
 			addWrite(p.Addr+uint16(i), b, key)
 		}
 	}
-	if len(writes) == 0 {
-		return results, nil
+	if len(plan.writes) == 0 {
+		return plan, nil
 	}
 	// Запись целиком через транспорт (он сам делает служебное обрамление,
 	// а для Малины — отправляет mapd без стартовой/завершающей команды).
-	if err := conn.WriteBytes(ctx, writes); err != nil {
-		return results, err
+	if err := conn.WriteBytes(ctx, plan.writes); err != nil {
+		return plan, err
 	}
-	// Чтение-обратно затронутых ячеек.
-	addrs := make([]uint16, 0, len(writes))
-	for _, w := range writes {
+	return plan, nil
+}
+
+// verifyMapSettingsWrites читает записанные ячейки каналом чтения и дописывает в
+// plan.results расхождения и ошибки обратного чтения. Write-only ячейки
+// (skipVerify) не проверяются.
+func verifyMapSettingsWrites(ctx context.Context, r cellReader, plan *mapWritePlan) {
+	if plan == nil || len(plan.writes) == 0 {
+		return
+	}
+	addrs := make([]uint16, 0, len(plan.writes))
+	for _, w := range plan.writes {
 		addrs = append(addrs, w.Addr)
 	}
-	cells, errs := conn.ReadCells(ctx, uniqueU16(addrs))
+	cells, errs := r.ReadCells(ctx, uniqueU16(addrs))
 	readErr := strings.Join(errs, "; ")
-	for _, w := range writes {
-		if skipVerify[w.Addr] {
+	for _, w := range plan.writes {
+		if plan.skipVerify[w.Addr] {
 			continue
 		}
-		key := addrKey[w.Addr]
+		key := plan.addrKey[w.Addr]
 		if key == "" {
 			key = fmt.Sprintf("0x%03X", w.Addr)
 		}
-		if _, done := results[key]; done {
+		if _, done := plan.results[key]; done {
 			continue
 		}
 		got, ok := cells[w.Addr]
@@ -1155,17 +1171,16 @@ func applyMapSettings(ctx context.Context, conn cellConn, mode string, changes m
 			// Ошибку обратного чтения нельзя считать успешной верификацией:
 			// сообщаем о ней явно, с исходным ключом параметра.
 			if readErr != "" {
-				results[key] = "верификация: ошибка обратного чтения: " + readErr
+				plan.results[key] = "верификация: ошибка обратного чтения: " + readErr
 			} else {
-				results[key] = "верификация: нет данных обратного чтения"
+				plan.results[key] = "верификация: нет данных обратного чтения"
 			}
 			continue
 		}
 		if got != w.Value {
-			results[key] = fmt.Sprintf("верификация: получено %d, ждали %d", got, w.Value)
+			plan.results[key] = fmt.Sprintf("верификация: получено %d, ждали %d", got, w.Value)
 		}
 	}
-	return results, nil
 }
 
 func uniqueU16(in []uint16) []uint16 {
