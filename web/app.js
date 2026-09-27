@@ -96,8 +96,6 @@
     if (node && n > 1) { node.classList.add('ms-cols'); node.style.columnCount = String(n); }
     return node;
   }
-  // delay — пауза (мс) перед повторным чтением после записи.
-  function delay(ms) { return new Promise(function (res) { setTimeout(res, ms); }); }
   // fmtDays12/parseDays12 — значение в днях (код/12); 255 показываем как есть.
   function fmtDays12(raw) {
     if (raw === null || raw === undefined) return '—';
@@ -431,11 +429,11 @@
           if (!window.confirm('Вы уверены?\n\n' + label)) return;
           setStatus(uiStatus(), 'Переключение: ' + label + '…');
           api('/api/action', { method: 'POST', body: { mode: mode, key: 'relay' + rl.num } }).then(function () {
-            return delay(3000).then(function () { return readAll(); }).then(function () {
+            return readAll().then(function () {
               showDialog('Готово', label + ' — выполнено.', true);
             });
           }).catch(function (e) {
-            return delay(3000).then(function () { return readAll(); })
+            return readAll()
               .then(function () { showDialog('Ошибка', 'Реле ' + rl.num + ': ' + e.message, false); });
           });
         });
@@ -479,11 +477,11 @@
         }
         setStatus(uiStatus(), 'Выполняется: ' + a.name + '…');
         api('/api/action', { method: 'POST', body: { mode: mode, key: a.key } }).then(function () {
-          return delay(3000).then(function () { return readAll(); }).then(function () {
+          return readAll().then(function () {
             showDialog('Готово', 'Команда «' + a.name + '» выполнена.', true);
           });
         }).catch(function (e) {
-          return delay(3000).then(function () { return readAll(); })
+          return readAll()
             .then(function () { showDialog('Ошибка', 'Команда «' + a.name + '»: ' + e.message, false); });
         });
       });
@@ -857,12 +855,13 @@
             if (errs.length) { ok = false; text = 'Не записано: ' + errs.map(function (k) { return k + ': ' + results[k]; }).join('; '); }
             // После успешного сохранения защищённой ячейки — вернуть защиту.
             if (ok && danger) delete unlockedKeys[p.key];
-            // Пауза 3 с, затем перечитывание (после любой попытки, в т.ч. неуспешной).
-            return delay(3000).then(function () { return readAll(); })
+            // Перечитывание сразу после ответа (обратное чтение и пауза 0,5 с —
+            // на сервере), в т.ч. после неуспешной попытки.
+            return readAll()
               .then(function () { showDialog(ok ? 'Готово' : 'Ошибка', text, ok); });
           })
           .catch(function (e) {
-            return delay(3000).then(function () { return readAll(); })
+            return readAll()
               .then(function () { showDialog('Ошибка', 'Запись «' + p.name + '»: ' + e.message, false); });
           })
           .finally(function () { updateState(); });
@@ -990,11 +989,11 @@
     var h = parseInt(timeHEl.value, 10), m = parseInt(timeMEl.value, 10);
     setStatus(timeStatusEl, 'Запись времени…');
     api('/api/time', { method: 'POST', body: { mode: mode, hour: h, minute: m } }).then(function () {
-      return delay(3000).then(function () { return readAll(); }).then(function () {
+      return readAll().then(function () {
         showDialog('Готово', 'Время записано: ' + String(h).padStart(2, '0') + ':' + String(m).padStart(2, '0'), true);
       });
     }).catch(function (e) {
-      return delay(3000).then(function () { return readAll(); })
+      return readAll()
         .then(function () { showDialog('Ошибка', 'Запись времени: ' + e.message, false); });
     });
   }

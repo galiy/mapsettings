@@ -48,6 +48,11 @@ func setCfg(c fileConfig) {
 // readTimeout — верхняя граница на медленные операции с МАП.
 const readTimeout = 90 * time.Second
 
+// verifyDelay — пауза перед обратным чтением после записи: устройству нужно
+// немного времени, чтобы применить запись (особенно EEPROM), иначе верификация
+// может увидеть ещё старое значение.
+const verifyDelay = 500 * time.Millisecond
+
 // writeMu сериализует операции записи (apply/action/time) на уровне всего
 // приложения: каждое обращение к МАП — это отдельная сессия записи
 // (EEProm WR → запись → load_EEProm), и параллельные запросы из разных вкладок
@@ -345,6 +350,7 @@ func apiApply(w http.ResponseWriter, r *http.Request) {
 	// (важно для COM).
 	_ = conn.Close()
 	if len(plan.writes) > 0 {
+		time.Sleep(verifyDelay)
 		if vconn, verr := openConn(c.Read); verr != nil {
 			log.Printf("запись: обратное чтение недоступно (%s): %v", connSummary(c.Read), verr)
 			resp := map[string]any{"results": plan.results, "warning": "верификация не выполнена: " + verr.Error()}
